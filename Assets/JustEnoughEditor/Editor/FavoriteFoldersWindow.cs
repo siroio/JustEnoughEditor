@@ -20,7 +20,30 @@ namespace JustEnoughEditor
         private static Dictionary<string, Color> folderColors = new Dictionary<string, Color>();
         
         private const string PrefsKey = "JustEnoughEditor_FavoriteFolders";
-        private const string SharedDataPath = "Assets/Editor/FavoriteFoldersData.asset";
+        private const string DataFileName = "FavoriteFoldersData.asset";
+
+        // このスクリプト自身の場所を基準に Data/ フォルダのパスを動的に解決する。
+        // スクリプトがどこに置かれていても JustEnoughEditor/Data/ に保存される。
+        private static string SharedDataDir
+        {
+            get
+            {
+                var guids = AssetDatabase.FindAssets("FavoriteFoldersWindow t:Script");
+                if (guids.Length > 0)
+                {
+                    string scriptPath = AssetDatabase.GUIDToAssetPath(guids[0]);
+                    // .../JustEnoughEditor/Editor/FavoriteFoldersWindow.cs
+                    // → .../JustEnoughEditor/Data
+                    string editorDir = Path.GetDirectoryName(scriptPath); // .../Editor
+                    string packageDir = Path.GetDirectoryName(editorDir); // .../JustEnoughEditor
+                    return packageDir.Replace('\\', '/') + "/Data";
+                }
+                // フォールバック
+                return "Assets/JustEnoughEditor/Data";
+            }
+        }
+
+        private static string SharedDataPath => SharedDataDir + "/" + DataFileName;
 
         private Vector2 scrollPosition;
 
@@ -369,6 +392,11 @@ namespace JustEnoughEditor
                 var dataAsset = AssetDatabase.LoadAssetAtPath<FavoriteFoldersData>(SharedDataPath);
                 if (dataAsset == null)
                 {
+                    if (!AssetDatabase.IsValidFolder(SharedDataDir))
+                    {
+                        Directory.CreateDirectory(SharedDataDir);
+                        AssetDatabase.Refresh();
+                    }
                     dataAsset = ScriptableObject.CreateInstance<FavoriteFoldersData>();
                     AssetDatabase.CreateAsset(dataAsset, SharedDataPath);
                 }
