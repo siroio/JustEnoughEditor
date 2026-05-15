@@ -1,17 +1,24 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.AI;
+using UnityEngine.UI;
+using Object = UnityEngine.Object;
 
 namespace JustEnoughEditor
 {
     /// <summary>
     /// Hierarchy ウィンドウの各行に背景色・コンポーネントアイコンを描画する Editor 拡張クラス。
-    /// <see cref="EditorApplication.hierarchyWindowItemOnGUI"/> にフックして動作する。
+    /// <see cref="EditorApplication.hierarchyWindowItemOnGUI" /> にフックして動作する。
     /// </summary>
     [InitializeOnLoad]
     public static class HierarchyColorAndIconDrawer
     {
+        /// <summary>カスタムアイコン GUID を EditorPrefs に保存する際のキープレフィックス。</summary>
+        private const string k_CustomIconKeyPrefix = "JEE_CustomIcon_";
+
         /// <summary>階層の深さに応じた背景色パレット（最大32階層）。</summary>
         private static readonly Color[] s_depthColors = new Color[32];
 
@@ -22,28 +29,22 @@ namespace JustEnoughEditor
         private static int s_hoveredInstanceID;
 
         /// <summary>コンポーネント型ごとのアイコンテクスチャキャッシュ。毎フレームの ObjectContent 呼び出しを避ける。</summary>
-        private static readonly Dictionary<Type, Texture> s_iconCache = new Dictionary<Type, Texture>();
+        private static readonly Dictionary<Type, Texture> s_iconCache = new();
 
         /// <summary>アイコン描画時に再利用する GUIContent インスタンス。毎フレームの new を避ける。</summary>
-        private static GUIContent s_reusableContent = new GUIContent();
-
-        /// <summary>1行に表示するコンポーネントアイコンの最大数。</summary>
-        private const int k_MaxIconCount = 4;
-
-        /// <summary>カスタムアイコン GUID を EditorPrefs に保存する際のキープレフィックス。</summary>
-        private const string k_CustomIconKeyPrefix = "JEE_CustomIcon_";
+        private static GUIContent s_reusableContent = new();
 
         /// <summary>ObjectPicker を識別するコントロール ID。</summary>
         private static int s_objectPickerControlID = -1;
 
-        /// <summary>カスタムアイコン割り当て待ちの GameObject instanceID。</summary>
-        private static int s_pendingCustomIconInstanceID = -1;
+        /// <summary>カスタムアイコン割り当て待ちの保存キー。</summary>
+        private static string s_pendingCustomIconKey = "";
 
         /// <summary>
         /// アイコン表示から除外する Unity 組み込みコンポーネントの型セット。
         /// ユーザー定義スクリプトを優先表示するために使用する。
         /// </summary>
-        private static readonly HashSet<Type> s_excludedComponentTypes = new HashSet<Type>
+        private static readonly HashSet<Type> s_excludedComponentTypes = new()
         {
             typeof(Transform),
             typeof(RectTransform),
@@ -74,11 +75,11 @@ namespace JustEnoughEditor
             typeof(ReflectionProbe),
             typeof(LightProbeGroup),
             typeof(NavMeshAgent),
-            typeof(NavMeshObstacle),
+            typeof(NavMeshObstacle)
         };
 
         /// <summary>instanceID から UnityEngine.Object を取得するリフレクション経由のデリゲート。</summary>
-        private static Func<int, UnityEngine.Object> s_getInstanceIDToObject;
+        private static Func<int, Object> s_getInstanceIDToObject;
 
         static HierarchyColorAndIconDrawer()
         {
@@ -95,26 +96,24 @@ namespace JustEnoughEditor
             s_iconCache.Clear();
             s_reusableContent = new GUIContent();
 
-            for (int i = 0; i < 32; i++)
+            for (var i = 0; i < 32; i++)
             {
-                float hue = (0.6f + i * 0.15f) % 1.0f;
-                Color color = Color.HSVToRGB(hue, 0.6f, 0.9f);
+                var hue = (0.6f + i * 0.15f) % 1.0f;
+                var color = Color.HSVToRGB(hue, 0.6f, 0.9f);
                 color.a = 0.08f;
                 s_depthColors[i] = color;
             }
 
             var method = typeof(EditorUtility).GetMethod(
                 "InstanceIDToObject",
-                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic,
+                BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
                 null,
-                new Type[] { typeof(int) },
+                new[] { typeof(int) },
                 null);
 
             if (method != null)
-            {
-                s_getInstanceIDToObject = (Func<int, UnityEngine.Object>)Delegate.CreateDelegate(
-                    typeof(Func<int, UnityEngine.Object>), method);
-            }
+                s_getInstanceIDToObject = (Func<int, Object>)Delegate.CreateDelegate(
+                    typeof(Func<int, Object>), method);
 
             EditorApplication.hierarchyWindowItemOnGUI -= OnHierarchyGUI;
             EditorApplication.hierarchyWindowItemOnGUI += OnHierarchyGUI;
@@ -148,14 +147,14 @@ namespace JustEnoughEditor
 
         /// <summary>
         /// 指定した型のアイコンテクスチャをキャッシュから返す。
-        /// キャッシュミス時は <see cref="EditorGUIUtility.ObjectContent"/> で取得してキャッシュに追加する。
+        /// キャッシュミス時は <see cref="EditorGUIUtility.ObjectContent" /> で取得してキャッシュに追加する。
         /// </summary>
         private static Texture GetCachedIcon(Type type)
         {
-            if (s_iconCache.TryGetValue(type, out Texture cached))
+            if (s_iconCache.TryGetValue(type, out var cached))
                 return cached;
 
-            Texture icon = EditorGUIUtility.ObjectContent(null, type).image;
+            var icon = EditorGUIUtility.ObjectContent(null, type).image;
             s_iconCache[type] = icon;
             return icon;
         }
@@ -165,33 +164,33 @@ namespace JustEnoughEditor
         /// </summary>
         private static void OnHierarchyGUI(int instanceID, Rect selectionRect)
         {
-            if (!JEEMenu.IsHierarchyEnabled) return;
             if (s_getInstanceIDToObject == null) return;
             if (s_getInstanceIDToObject(instanceID) is not GameObject obj) return;
 
-            int id = obj.GetInstanceID();
+            var id = obj.GetInstanceID();
 
             // ObjectPicker でテクスチャが選択されたときにカスタムアイコンの GUID を保存する
             if (Event.current.commandName == "ObjectSelectorUpdated" &&
                 EditorGUIUtility.GetObjectPickerControlID() == s_objectPickerControlID)
-            {
                 if (EditorGUIUtility.GetObjectPickerObject() is Texture2D selectedTexture &&
-                    s_pendingCustomIconInstanceID != -1)
+                    !string.IsNullOrEmpty(s_pendingCustomIconKey))
                 {
-                    string guid = AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(selectedTexture));
+                    var guid = AssetDatabase.AssetPathToGUID(AssetDatabase.GetAssetPath(selectedTexture));
                     if (!string.IsNullOrEmpty(guid))
                     {
-                        EditorPrefs.SetString(k_CustomIconKeyPrefix + s_pendingCustomIconInstanceID, guid);
+                        EditorPrefs.SetString(s_pendingCustomIconKey, guid);
                         EditorApplication.RepaintHierarchyWindow();
                     }
                 }
-            }
+
             if (Event.current.commandName == "ObjectSelectorClosed" &&
                 EditorGUIUtility.GetObjectPickerControlID() == s_objectPickerControlID)
             {
                 s_objectPickerControlID = -1;
-                s_pendingCustomIconInstanceID = -1;
+                s_pendingCustomIconKey = "";
             }
+
+            if (!JEEMenu.IsHierarchyEnabled) return;
 
             // Repaint 時の座標ズレを避けるため、MouseMove/MouseDrag でホバー行を正確にトラッキングする
             if (Event.current.type == EventType.MouseLeaveWindow)
@@ -200,9 +199,9 @@ namespace JustEnoughEditor
             }
             else if (Event.current.type == EventType.MouseMove || Event.current.type == EventType.MouseDrag)
             {
-                Rect rowRect = new Rect(0, selectionRect.y, selectionRect.width + 1000, selectionRect.height);
-                bool isMouseOverHierarchy = EditorWindow.mouseOverWindow != null &&
-                    EditorWindow.mouseOverWindow.GetType().Name == "SceneHierarchyWindow";
+                var rowRect = new Rect(0, selectionRect.y, selectionRect.width + 1000, selectionRect.height);
+                var isMouseOverHierarchy = EditorWindow.mouseOverWindow != null &&
+                                           EditorWindow.mouseOverWindow.GetType().Name == "SceneHierarchyWindow";
                 if (isMouseOverHierarchy && rowRect.Contains(Event.current.mousePosition))
                     s_hoveredInstanceID = id;
                 else if (s_hoveredInstanceID == id)
@@ -210,7 +209,7 @@ namespace JustEnoughEditor
             }
 
             // "--- Section ---" や "[Group]" 形式の名前をフォルダ行として扱う
-            bool isFolder = obj.name.StartsWith("---") || (obj.name.StartsWith("[") && obj.name.EndsWith("]"));
+            var isFolder = obj.name.StartsWith("---") || (obj.name.StartsWith("[") && obj.name.EndsWith("]"));
 
             if (isFolder)
             {
@@ -234,8 +233,8 @@ namespace JustEnoughEditor
         {
             if (Event.current.type != EventType.Repaint) return;
 
-            bool isSelected = Selection.Contains(obj);
-            bool isHovered = s_hoveredInstanceID == obj.GetInstanceID();
+            var isSelected = Selection.Contains(obj);
+            var isHovered = s_hoveredInstanceID == obj.GetInstanceID();
 
             Color bgColor;
             if (isSelected)
@@ -245,21 +244,23 @@ namespace JustEnoughEditor
             else
                 bgColor = EditorGUIUtility.isProSkin ? new Color32(45, 45, 45, 255) : new Color32(190, 190, 190, 255);
 
-            EditorGUI.DrawRect(new Rect(selectionRect.x, selectionRect.y, selectionRect.width + 50, selectionRect.height), bgColor);
+            EditorGUI.DrawRect(
+                new Rect(selectionRect.x, selectionRect.y, selectionRect.width + 50, selectionRect.height), bgColor);
 
-            Texture folderIcon = EditorGUIUtility.IconContent("Folder Icon").image;
+            var folderIcon = EditorGUIUtility.IconContent("Folder Icon").image;
             if (folderIcon != null)
                 GUI.DrawTexture(new Rect(selectionRect.x, selectionRect.y, 16, 16), folderIcon);
 
-            GUIStyle style = new GUIStyle(EditorStyles.boldLabel);
-            Color textColor = EditorGUIUtility.isProSkin ? new Color(0.9f, 0.9f, 0.9f) : new Color(0.1f, 0.1f, 0.1f);
+            var style = new GUIStyle(EditorStyles.boldLabel);
+            var textColor = EditorGUIUtility.isProSkin ? new Color(0.9f, 0.9f, 0.9f) : new Color(0.1f, 0.1f, 0.1f);
             if (isSelected) textColor = Color.white;
             if (!obj.activeInHierarchy) textColor.a = 0.5f;
             style.normal.textColor = textColor;
-            GUI.Label(new Rect(selectionRect.x + 18, selectionRect.y, selectionRect.width - 18, selectionRect.height), obj.name, style);
+            GUI.Label(new Rect(selectionRect.x + 18, selectionRect.y, selectionRect.width - 18, selectionRect.height),
+                obj.name, style);
 
-            int depth = GetDepth(obj.transform);
-            Color depthColor = s_depthColors[Mathf.Min(depth, s_depthColors.Length - 1)];
+            var depth = GetDepth(obj.transform);
+            var depthColor = s_depthColors[Mathf.Min(depth, s_depthColors.Length - 1)];
             EditorGUI.DrawRect(new Rect(selectionRect.x - 4, selectionRect.y, 2, selectionRect.height),
                 new Color(depthColor.r, depthColor.g, depthColor.b, 1f));
         }
@@ -272,20 +273,20 @@ namespace JustEnoughEditor
         {
             if (Event.current.type != EventType.Repaint) return;
 
-            int depth = GetDepth(obj.transform);
-            Color bgColor = s_depthColors[Mathf.Min(depth, s_depthColors.Length - 1)];
+            var depth = GetDepth(obj.transform);
+            var bgColor = s_depthColors[Mathf.Min(depth, s_depthColors.Length - 1)];
 
             if (bgColor.a <= 0f) return;
 
-            bool isSelected = Selection.Contains(obj);
-            bool isHovered = s_hoveredInstanceID == obj.GetInstanceID();
+            var isSelected = Selection.Contains(obj);
+            var isHovered = s_hoveredInstanceID == obj.GetInstanceID();
 
             if (!isSelected && !isHovered)
             {
                 EnsureFadeTexture();
-                float startX = selectionRect.x - 4;
-                float width = selectionRect.x + selectionRect.width - startX;
-                Color oldColor = GUI.color;
+                var startX = selectionRect.x - 4;
+                var width = selectionRect.x + selectionRect.width - startX;
+                var oldColor = GUI.color;
                 GUI.color = bgColor;
                 GUI.DrawTexture(new Rect(startX, selectionRect.y, width, selectionRect.height), s_fadeTexture);
                 GUI.color = oldColor;
@@ -302,18 +303,17 @@ namespace JustEnoughEditor
         /// </summary>
         private static void DrawComponentIcons(GameObject obj, Rect selectionRect)
         {
-            Component[] allComponents = obj.GetComponents<Component>();
-            List<Component> priorityComponents = FilterPriorityComponents(allComponents);
+            var allComponents = obj.GetComponents<Component>();
+            var priorityComponents = FilterPriorityComponents(allComponents);
 
-            Color savedColor = GUI.color;
+            var savedColor = GUI.color;
             if (!obj.activeInHierarchy)
                 GUI.color = new Color(savedColor.r, savedColor.g, savedColor.b, 0.4f);
 
-            int missingScriptCount = 0;
+            var missingScriptCount = 0;
             foreach (var c in allComponents)
-            {
-                if (c == null) missingScriptCount++;
-            }
+                if (c == null)
+                    missingScriptCount++;
 
             if (priorityComponents.Count == 0 && missingScriptCount == 0)
             {
@@ -322,27 +322,27 @@ namespace JustEnoughEditor
             }
 
             // 表示しきれなかったコンポーネント数を "+N" ラベルで示す
-            int totalVisible = 0;
+            var totalVisible = 0;
             foreach (var c in allComponents)
             {
                 if (c == null || c is Transform) continue;
                 totalVisible++;
             }
-            int overflowCount = Mathf.Max(0, totalVisible - priorityComponents.Count);
 
-            float iconSize = 16f;
-            float overflowLabelWidth = overflowCount > 0 ? 24f : 0f;
-            float currentX = selectionRect.x + selectionRect.width - iconSize - overflowLabelWidth;
+            var overflowCount = Mathf.Max(0, totalVisible - priorityComponents.Count);
+
+            var iconSize = 16f;
+            var overflowLabelWidth = overflowCount > 0 ? 24f : 0f;
+            var currentX = selectionRect.x + selectionRect.width - iconSize - overflowLabelWidth;
 
             // Missing Script スロットごとに警告アイコンを描画する
             if (missingScriptCount > 0)
             {
-                Texture warnIcon = EditorGUIUtility.IconContent("console.warnicon.sml").image;
+                var warnIcon = EditorGUIUtility.IconContent("console.warnicon.sml").image;
                 if (warnIcon != null)
-                {
-                    for (int i = 0; i < missingScriptCount; i++)
+                    for (var i = 0; i < missingScriptCount; i++)
                     {
-                        Rect iconRect = new Rect(currentX, selectionRect.y, iconSize, iconSize);
+                        var iconRect = new Rect(currentX, selectionRect.y, iconSize, iconSize);
                         if (iconRect.x < selectionRect.x + JEEMenu.OverlapGuard) break;
 
                         s_reusableContent.image = warnIcon;
@@ -350,16 +350,15 @@ namespace JustEnoughEditor
                         GUI.Label(iconRect, s_reusableContent, GUIStyle.none);
                         currentX -= iconSize + 2f;
                     }
-                }
             }
 
             // 優先コンポーネントのアイコンを右端から順に描画する
             foreach (var comp in priorityComponents)
             {
-                Texture image = GetCachedIcon(comp.GetType());
+                var image = GetCachedIcon(comp.GetType());
                 if (image == null) continue;
 
-                Rect iconRect = new Rect(currentX, selectionRect.y, iconSize, iconSize);
+                var iconRect = new Rect(currentX, selectionRect.y, iconSize, iconSize);
                 if (iconRect.x < selectionRect.x + JEEMenu.OverlapGuard) break;
 
                 s_reusableContent.image = image;
@@ -369,18 +368,18 @@ namespace JustEnoughEditor
             }
 
             // カスタムアイコンをアイコン列の最左端に描画する
-            string customIconKey = k_CustomIconKeyPrefix + obj.GetInstanceID();
-            string customIconGuid = EditorPrefs.GetString(customIconKey, "");
+            var customIconKey = GetCustomIconKey(obj);
+            var customIconGuid = GetCustomIconGuid(obj, customIconKey);
             if (!string.IsNullOrEmpty(customIconGuid))
             {
-                string assetPath = AssetDatabase.GUIDToAssetPath(customIconGuid);
-                Texture2D customTexture = string.IsNullOrEmpty(assetPath)
+                var assetPath = AssetDatabase.GUIDToAssetPath(customIconGuid);
+                var customTexture = string.IsNullOrEmpty(assetPath)
                     ? null
                     : AssetDatabase.LoadAssetAtPath<Texture2D>(assetPath);
 
                 if (customTexture != null)
                 {
-                    Rect iconRect = new Rect(currentX, selectionRect.y, iconSize, iconSize);
+                    var iconRect = new Rect(currentX, selectionRect.y, iconSize, iconSize);
                     if (iconRect.x >= selectionRect.x + JEEMenu.OverlapGuard)
                     {
                         s_reusableContent.image = customTexture;
@@ -398,8 +397,8 @@ namespace JustEnoughEditor
 
             if (overflowCount > 0)
             {
-                float labelX = selectionRect.x + selectionRect.width - overflowLabelWidth;
-                GUIStyle labelStyle = new GUIStyle(EditorStyles.miniLabel)
+                var labelX = selectionRect.x + selectionRect.width - overflowLabelWidth;
+                var labelStyle = new GUIStyle(EditorStyles.miniLabel)
                 {
                     normal = { textColor = new Color(0.6f, 0.6f, 0.6f) }
                 };
@@ -410,28 +409,28 @@ namespace JustEnoughEditor
             GUI.color = savedColor;
         }
 
-        /// <summary>
-        /// コンポーネント配列から表示優先度の高いものを最大 <see cref="k_MaxIconCount"/> 個返す。
-        /// ユーザー定義 MonoBehaviour を優先し、除外リスト外の組み込みコンポーネントで補完する。
-        /// アイコンフィルターで非表示に設定された型はスキップする。
-        /// </summary>
+        /// <summary>コンポーネント配列から表示優先度の高いものを設定数まで返す。</summary>
         private static List<Component> FilterPriorityComponents(Component[] components)
         {
             var userScripts = new List<Component>();
             var otherComponents = new List<Component>();
+            var sceneOrderComponents = new List<Component>();
 
             foreach (var comp in components)
             {
                 if (comp == null) continue;
                 if (comp is Transform) continue;
 
-                Type type = comp.GetType();
+                var type = comp.GetType();
 
                 if (!EditorPrefs.GetBool($"JEE_IconFilter_{type.FullName}", true)) continue;
 
-                bool isUserScript = comp is MonoBehaviour
-                    && !s_excludedComponentTypes.Contains(type)
-                    && (type.Namespace == null || !type.Namespace.StartsWith("UnityEngine"));
+                var isUserScript = comp is MonoBehaviour
+                                   && !s_excludedComponentTypes.Contains(type)
+                                   && (type.Namespace == null || !type.Namespace.StartsWith("UnityEngine"));
+
+                if (!s_excludedComponentTypes.Contains(type))
+                    sceneOrderComponents.Add(comp);
 
                 if (isUserScript)
                     userScripts.Add(comp);
@@ -439,19 +438,33 @@ namespace JustEnoughEditor
                     otherComponents.Add(comp);
             }
 
-            var result = new List<Component>(k_MaxIconCount);
-            result.AddRange(userScripts);
-
-            foreach (var comp in otherComponents)
+            var maxIconCount = JEEPrefs.MaxIconCount;
+            var result = new List<Component>(maxIconCount);
+            switch (JEEPrefs.ComponentPriorityMode)
             {
-                if (result.Count >= k_MaxIconCount) break;
-                result.Add(comp);
+                case JEEComponentPriorityMode.BuiltInFirst:
+                    AddRangeUntilFull(result, otherComponents, maxIconCount);
+                    AddRangeUntilFull(result, userScripts, maxIconCount);
+                    break;
+                case JEEComponentPriorityMode.SceneOrder:
+                    AddRangeUntilFull(result, sceneOrderComponents, maxIconCount);
+                    break;
+                default:
+                    AddRangeUntilFull(result, userScripts, maxIconCount);
+                    AddRangeUntilFull(result, otherComponents, maxIconCount);
+                    break;
             }
 
-            if (result.Count > k_MaxIconCount)
-                result.RemoveRange(k_MaxIconCount, result.Count - k_MaxIconCount);
-
             return result;
+        }
+
+        private static void AddRangeUntilFull(List<Component> result, List<Component> source, int maxCount)
+        {
+            foreach (var comp in source)
+            {
+                if (result.Count >= maxCount) break;
+                result.Add(comp);
+            }
         }
 
         /// <summary>
@@ -460,8 +473,13 @@ namespace JustEnoughEditor
         [MenuItem("JEE/Assign Custom Icon...", false, 70)]
         private static void AssignCustomIcon()
         {
-            if (Selection.activeGameObject == null) return;
-            s_pendingCustomIconInstanceID = Selection.activeGameObject.GetInstanceID();
+            AssignCustomIcon(Selection.activeGameObject);
+        }
+
+        public static void AssignCustomIcon(GameObject target)
+        {
+            if (target == null) return;
+            s_pendingCustomIconKey = GetCustomIconKey(target);
             EditorGUIUtility.ShowObjectPicker<Texture2D>(null, false, "", 0);
             s_objectPickerControlID = EditorGUIUtility.GetObjectPickerControlID();
         }
@@ -478,8 +496,14 @@ namespace JustEnoughEditor
         [MenuItem("JEE/Remove Custom Icon", false, 71)]
         private static void RemoveCustomIcon()
         {
-            if (Selection.activeGameObject == null) return;
-            EditorPrefs.DeleteKey(k_CustomIconKeyPrefix + Selection.activeGameObject.GetInstanceID());
+            RemoveCustomIcon(Selection.activeGameObject);
+        }
+
+        public static void RemoveCustomIcon(GameObject target)
+        {
+            if (target == null) return;
+            EditorPrefs.DeleteKey(GetCustomIconKey(target));
+            EditorPrefs.DeleteKey(k_CustomIconKeyPrefix + target.GetInstanceID());
             EditorApplication.RepaintHierarchyWindow();
         }
 
@@ -487,7 +511,43 @@ namespace JustEnoughEditor
         private static bool ValidateRemoveCustomIcon()
         {
             if (Selection.activeGameObject == null) return false;
-            return EditorPrefs.HasKey(k_CustomIconKeyPrefix + Selection.activeGameObject.GetInstanceID());
+            return HasCustomIcon(Selection.activeGameObject);
+        }
+
+        public static bool HasCustomIcon(GameObject target)
+        {
+            if (target == null) return false;
+            return EditorPrefs.HasKey(GetCustomIconKey(target)) ||
+                   EditorPrefs.HasKey(k_CustomIconKeyPrefix + target.GetInstanceID());
+        }
+
+        /// <summary>
+        /// シーン再読込後も維持される GlobalObjectId を使ってカスタムアイコン保存キーを作る。
+        /// </summary>
+        private static string GetCustomIconKey(GameObject obj)
+        {
+            var globalId = GlobalObjectId.GetGlobalObjectIdSlow(obj).ToString();
+            return k_CustomIconKeyPrefix + globalId;
+        }
+
+        /// <summary>
+        /// 旧 instanceID キーの値があれば安定キーへ移行して返す。
+        /// </summary>
+        private static string GetCustomIconGuid(GameObject obj, string customIconKey)
+        {
+            var guid = EditorPrefs.GetString(customIconKey, "");
+            if (!string.IsNullOrEmpty(guid))
+                return guid;
+
+            var legacyKey = k_CustomIconKeyPrefix + obj.GetInstanceID();
+            guid = EditorPrefs.GetString(legacyKey, "");
+            if (!string.IsNullOrEmpty(guid))
+            {
+                EditorPrefs.SetString(customIconKey, guid);
+                EditorPrefs.DeleteKey(legacyKey);
+            }
+
+            return guid;
         }
 
         /// <summary>
@@ -495,12 +555,13 @@ namespace JustEnoughEditor
         /// </summary>
         private static int GetDepth(Transform t)
         {
-            int depth = 0;
+            var depth = 0;
             while (t.parent != null)
             {
                 depth++;
                 t = t.parent;
             }
+
             return depth;
         }
     }

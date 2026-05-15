@@ -1,5 +1,4 @@
 using UnityEditor;
-using UnityEngine;
 
 namespace JustEnoughEditor
 {
@@ -9,20 +8,14 @@ namespace JustEnoughEditor
     /// </summary>
     public static class JEEMenu
     {
-        private const string k_HierarchyToggleKey     = "JEE_HierarchyExtensionEnabled";
-        private const string k_ProjectToggleKey       = "JEE_ProjectFavoriteColorsEnabled";
-        private const string k_HierarchyColorToggleKey = "JEE_HierarchyColorEnabled";
-        private const string k_HierarchyIconToggleKey  = "JEE_HierarchyIconEnabled";
-        private const string k_OverlapGuardKey         = "JEE_IconOverlapGuard";
-
         /// <summary>
         /// Hierarchy 拡張機能全体のマスタートグル。
         /// false の場合、背景色・アイコン描画をすべてスキップする。
         /// </summary>
         public static bool IsHierarchyEnabled
         {
-            get => EditorPrefs.GetBool(k_HierarchyToggleKey, true);
-            set => EditorPrefs.SetBool(k_HierarchyToggleKey, value);
+            get => JEEPrefs.IsHierarchyEnabled;
+            set => JEEPrefs.IsHierarchyEnabled = value;
         }
 
         /// <summary>
@@ -30,8 +23,8 @@ namespace JustEnoughEditor
         /// </summary>
         public static bool IsProjectColorsEnabled
         {
-            get => EditorPrefs.GetBool(k_ProjectToggleKey, true);
-            set => EditorPrefs.SetBool(k_ProjectToggleKey, value);
+            get => JEEPrefs.IsProjectColorsEnabled;
+            set => JEEPrefs.IsProjectColorsEnabled = value;
         }
 
         /// <summary>
@@ -39,8 +32,8 @@ namespace JustEnoughEditor
         /// </summary>
         public static bool IsHierarchyColorEnabled
         {
-            get => EditorPrefs.GetBool(k_HierarchyColorToggleKey, true);
-            set => EditorPrefs.SetBool(k_HierarchyColorToggleKey, value);
+            get => JEEPrefs.IsHierarchyColorEnabled;
+            set => JEEPrefs.IsHierarchyColorEnabled = value;
         }
 
         /// <summary>
@@ -48,8 +41,8 @@ namespace JustEnoughEditor
         /// </summary>
         public static bool IsHierarchyIconEnabled
         {
-            get => EditorPrefs.GetBool(k_HierarchyIconToggleKey, true);
-            set => EditorPrefs.SetBool(k_HierarchyIconToggleKey, value);
+            get => JEEPrefs.IsHierarchyIconEnabled;
+            set => JEEPrefs.IsHierarchyIconEnabled = value;
         }
 
         /// <summary>
@@ -58,24 +51,22 @@ namespace JustEnoughEditor
         /// </summary>
         public static int OverlapGuard
         {
-            get
-            {
-                int value = EditorPrefs.GetInt(k_OverlapGuardKey, 80);
-                int clamped = Mathf.Clamp(value, 40, 200);
-                EditorPrefs.SetInt(k_OverlapGuardKey, clamped);
-                return clamped;
-            }
-            set
-            {
-                EditorPrefs.SetInt(k_OverlapGuardKey, Mathf.Clamp(value, 40, 200));
-            }
+            get => JEEPrefs.OverlapGuard;
+            set => JEEPrefs.OverlapGuard = value;
         }
 
-        /// <summary>Favorite Folders ウィンドウを開く。</summary>
-        [MenuItem("JEE/Favorite Folders", false, 1)]
-        public static void OpenFavoriteFoldersWindow()
+        /// <summary>Favorite Assets ウィンドウを開く。</summary>
+        [MenuItem("JEE/Favorite Assets", false, 1)]
+        public static void OpenFavoriteAssetsWindow()
         {
-            FavoriteFoldersWindow.ShowWindow();
+            FavoriteAssetsWindow.ShowWindow();
+        }
+
+        /// <summary>JustEnoughEditor の統合設定ウィンドウを開く。</summary>
+        [MenuItem("JEE/Settings", false, 2)]
+        public static void OpenSettingsWindow()
+        {
+            JEESettingsWindow.ShowWindow();
         }
 
         /// <summary>Hierarchy 拡張機能全体の ON/OFF を切り替える。</summary>
@@ -123,18 +114,18 @@ namespace JustEnoughEditor
             return true;
         }
 
-        /// <summary>Favorite Folders のプロジェクトウィンドウ色付けの ON/OFF を切り替える。</summary>
-        [MenuItem("JEE/Enable Favorite Folders Extension", false, 53)]
+        /// <summary>Favorite Assets のプロジェクトウィンドウ色付けの ON/OFF を切り替える。</summary>
+        [MenuItem("JEE/Enable Favorite Assets Extension", false, 53)]
         public static void ToggleProjectColors()
         {
             IsProjectColorsEnabled = !IsProjectColorsEnabled;
             EditorApplication.RepaintProjectWindow();
         }
 
-        [MenuItem("JEE/Enable Favorite Folders Extension", true)]
+        [MenuItem("JEE/Enable Favorite Assets Extension", true)]
         public static bool ValidateToggleProjectColors()
         {
-            Menu.SetChecked("JEE/Enable Favorite Folders Extension", IsProjectColorsEnabled);
+            Menu.SetChecked("JEE/Enable Favorite Assets Extension", IsProjectColorsEnabled);
             return true;
         }
 
@@ -145,24 +136,63 @@ namespace JustEnoughEditor
             IconFilterWindow.ShowWindow();
         }
 
+        /// <summary>Missing Script Finder ウィンドウを開く。</summary>
+        [MenuItem("JEE/Missing Script Finder", false, 60)]
+        public static void OpenMissingScriptFinderWindow()
+        {
+            MissingScriptFinderWindow.ShowWindow();
+        }
+
+        [MenuItem("JEE/Export Settings...", false, 90)]
+        public static void ExportSettings()
+        {
+            JEESettingsIO.ExportSettings();
+        }
+
+        [MenuItem("JEE/Import Settings...", false, 91)]
+        public static void ImportSettings()
+        {
+            JEESettingsIO.ImportSettings();
+        }
+
         /// <summary>Overlap Guard を 40px に設定する。</summary>
         [MenuItem("JEE/Icon Overlap Guard/40px", false, 61)]
-        public static void SetOverlapGuard40() { OverlapGuard = 40; EditorApplication.RepaintHierarchyWindow(); }
+        public static void SetOverlapGuard40()
+        {
+            OverlapGuard = 40;
+            EditorApplication.RepaintHierarchyWindow();
+        }
 
         /// <summary>Overlap Guard を 80px に設定する。</summary>
         [MenuItem("JEE/Icon Overlap Guard/80px", false, 62)]
-        public static void SetOverlapGuard80() { OverlapGuard = 80; EditorApplication.RepaintHierarchyWindow(); }
+        public static void SetOverlapGuard80()
+        {
+            OverlapGuard = 80;
+            EditorApplication.RepaintHierarchyWindow();
+        }
 
         /// <summary>Overlap Guard を 120px に設定する。</summary>
         [MenuItem("JEE/Icon Overlap Guard/120px", false, 63)]
-        public static void SetOverlapGuard120() { OverlapGuard = 120; EditorApplication.RepaintHierarchyWindow(); }
+        public static void SetOverlapGuard120()
+        {
+            OverlapGuard = 120;
+            EditorApplication.RepaintHierarchyWindow();
+        }
 
         /// <summary>Overlap Guard を 160px に設定する。</summary>
         [MenuItem("JEE/Icon Overlap Guard/160px", false, 64)]
-        public static void SetOverlapGuard160() { OverlapGuard = 160; EditorApplication.RepaintHierarchyWindow(); }
+        public static void SetOverlapGuard160()
+        {
+            OverlapGuard = 160;
+            EditorApplication.RepaintHierarchyWindow();
+        }
 
         /// <summary>Overlap Guard を 200px に設定する。</summary>
         [MenuItem("JEE/Icon Overlap Guard/200px", false, 65)]
-        public static void SetOverlapGuard200() { OverlapGuard = 200; EditorApplication.RepaintHierarchyWindow(); }
+        public static void SetOverlapGuard200()
+        {
+            OverlapGuard = 200;
+            EditorApplication.RepaintHierarchyWindow();
+        }
     }
 }

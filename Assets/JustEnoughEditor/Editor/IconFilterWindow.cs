@@ -14,20 +14,86 @@ namespace JustEnoughEditor
     public class IconFilterWindow : EditorWindow
     {
         /// <summary>シーンから収集したコンポーネント型の一覧（Transform 除外・FullName 昇順）。</summary>
-        private List<Type> m_componentTypes = new List<Type>();
+        private List<Type> m_componentTypes = new();
 
         /// <summary>スクロールビューの現在位置。</summary>
         private Vector2 m_scrollPosition;
 
-        /// <summary>ウィンドウを開く、または既存ウィンドウにフォーカスする。</summary>
-        public static void ShowWindow()
-        {
-            GetWindow<IconFilterWindow>("Icon Filter Settings");
-        }
+        /// <summary>コンポーネント型一覧の検索文字列。</summary>
+        private string m_searchQuery = "";
 
         private void OnEnable()
         {
             RefreshComponentTypes();
+        }
+
+        private void OnGUI()
+        {
+            JEEEditorStyles.DrawHeader(
+                "Icon Filters",
+                "Choose which component types appear as icons in the Hierarchy.");
+            DrawHeader();
+            DrawSearchField();
+
+            m_scrollPosition = EditorGUILayout.BeginScrollView(m_scrollPosition);
+            var visibleCount = 0;
+            foreach (var type in m_componentTypes)
+            {
+                if (!MatchesSearch(type))
+                    continue;
+
+                visibleCount++;
+                var key = $"JEE_IconFilter_{type.FullName}";
+                var currentValue = EditorPrefs.GetBool(key, true);
+                using (new EditorGUILayout.HorizontalScope(JEEEditorStyles.Card))
+                {
+                    Texture icon = AssetPreview.GetMiniTypeThumbnail(type);
+                    if (icon != null)
+                        GUILayout.Label(icon, GUILayout.Width(20), GUILayout.Height(20));
+
+                    var newValue = EditorGUILayout.ToggleLeft(type.FullName, currentValue, GUILayout.Height(20));
+                    if (newValue != currentValue)
+                    {
+                        EditorPrefs.SetBool(key, newValue);
+                        EditorApplication.RepaintHierarchyWindow();
+                    }
+                }
+            }
+
+            EditorGUILayout.EndScrollView();
+
+            if (m_componentTypes.Count == 0)
+                JEEEditorStyles.DrawEmptyState(
+                    "No component types found",
+                    "Open a scene with components, then refresh this list.",
+                    "d_FilterByType");
+            else if (visibleCount == 0)
+                JEEEditorStyles.DrawEmptyState(
+                    "No components match the search",
+                    "Try a class name or namespace from the current scene.",
+                    "Search Icon");
+
+            EditorGUILayout.Space();
+
+            using (new EditorGUILayout.HorizontalScope(JEEEditorStyles.ToolbarCard))
+            {
+                GUILayout.FlexibleSpace();
+                if (GUILayout.Button(
+                        new GUIContent("Reset All Filters", EditorGUIUtility.IconContent("d_Refresh").image),
+                        GUILayout.Width(150), GUILayout.Height(24)))
+                {
+                    foreach (var type in m_componentTypes)
+                        EditorPrefs.DeleteKey($"JEE_IconFilter_{type.FullName}");
+                    EditorApplication.RepaintHierarchyWindow();
+                }
+            }
+        }
+
+        /// <summary>ウィンドウを開く、または既存ウィンドウにフォーカスする。</summary>
+        public static void ShowWindow()
+        {
+            var window = GetWindow<IconFilterWindow>("Icon Filter Settings");
+            window.minSize = new Vector2(460, 320);
         }
 
         /// <summary>
@@ -37,51 +103,76 @@ namespace JustEnoughEditor
         private void RefreshComponentTypes()
         {
             m_componentTypes.Clear();
-            var allComponents = FindObjectsOfType<Component>();
+            var allComponents = FindObjectsByType<Component>(FindObjectsSortMode.None);
             var typeSet = new HashSet<Type>();
             foreach (var comp in allComponents)
             {
                 if (comp == null) continue;
-                Type t = comp.GetType();
+                var t = comp.GetType();
                 if (t == typeof(Transform)) continue;
                 typeSet.Add(t);
             }
+
             m_componentTypes = typeSet.OrderBy(t => t.FullName).ToList();
         }
 
-        private void OnGUI()
+        private void DrawHeader()
         {
-            EditorGUILayout.LabelField("Component Icon Filters", EditorStyles.boldLabel);
-            EditorGUILayout.Space();
+            EditorGUILayout.BeginHorizontal(JEEEditorStyles.ToolbarCard);
+            GUILayout.Label(EditorGUIUtility.IconContent("d_FilterByType").image, GUILayout.Width(18),
+                GUILayout.Height(18));
+            GUILayout.Label("Component Icon Filters", JEEEditorStyles.SectionTitle, GUILayout.Width(150));
+            GUILayout.Label($"{m_componentTypes.Count} types", JEEEditorStyles.Pill, GUILayout.Width(84));
+            GUILayout.Label($"{GetHiddenFilterCount()} hidden", JEEEditorStyles.Pill, GUILayout.Width(84));
+            GUILayout.FlexibleSpace();
 
-            if (GUILayout.Button("Refresh"))
+            if (GUILayout.Button(new GUIContent("Refresh", EditorGUIUtility.IconContent("d_Refresh").image),
+                    GUILayout.Width(92)))
                 RefreshComponentTypes();
 
-            EditorGUILayout.Space();
+            EditorGUILayout.EndHorizontal();
+        }
 
-            m_scrollPosition = EditorGUILayout.BeginScrollView(m_scrollPosition);
-            foreach (var type in m_componentTypes)
+        private void DrawSearchField()
+        {
+            EditorGUILayout.BeginHorizontal(JEEEditorStyles.ToolbarCard);
+            GUILayout.Label(EditorGUIUtility.IconContent("Search Icon").image, GUILayout.Width(18),
+                GUILayout.Height(18));
+            var searchStyle = JEEEditorStyles.SearchFieldStyle();
+            m_searchQuery = GUILayout.TextField(m_searchQuery, searchStyle, GUILayout.MinWidth(120),
+                GUILayout.ExpandWidth(true));
+            using (new EditorGUI.DisabledScope(string.IsNullOrEmpty(m_searchQuery)))
             {
-                string key = $"JEE_IconFilter_{type.FullName}";
-                bool currentValue = EditorPrefs.GetBool(key, true);
-                bool newValue = EditorGUILayout.Toggle(type.FullName, currentValue);
-                if (newValue != currentValue)
+                if (GUILayout.Button("Clear", GUILayout.Width(52)))
                 {
-                    EditorPrefs.SetBool(key, newValue);
-                    EditorApplication.RepaintHierarchyWindow();
+                    m_searchQuery = "";
+                    GUI.FocusControl(null);
                 }
             }
-            EditorGUILayout.EndScrollView();
 
-            EditorGUILayout.Space();
+            EditorGUILayout.EndHorizontal();
+        }
 
-            // すべてのフィルター設定を初期状態（全表示）に戻す
-            if (GUILayout.Button("Reset All Filters"))
+        private int GetHiddenFilterCount()
+        {
+            var count = 0;
+            foreach (var type in m_componentTypes)
             {
-                foreach (var type in m_componentTypes)
-                    EditorPrefs.DeleteKey($"JEE_IconFilter_{type.FullName}");
-                EditorApplication.RepaintHierarchyWindow();
+                var key = $"JEE_IconFilter_{type.FullName}";
+                if (!EditorPrefs.GetBool(key, true))
+                    count++;
             }
+
+            return count;
+        }
+
+        private bool MatchesSearch(Type type)
+        {
+            if (string.IsNullOrWhiteSpace(m_searchQuery))
+                return true;
+
+            return type.FullName.IndexOf(m_searchQuery, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   type.Name.IndexOf(m_searchQuery, StringComparison.OrdinalIgnoreCase) >= 0;
         }
     }
 }
