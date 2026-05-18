@@ -39,10 +39,10 @@ namespace JustEnoughEditor
             using (new EditorGUILayout.HorizontalScope(JEEEditorStyles.ToolbarCard))
             {
                 GUILayout.Label("Status", JEEEditorStyles.SectionTitle, GUILayout.Width(48));
-                JEEEditorStyles.DrawStatusPill("Hierarchy", JEEMenu.IsHierarchyEnabled, GUILayout.Width(118));
-                JEEEditorStyles.DrawStatusPill("Colors", JEEMenu.IsHierarchyColorEnabled, GUILayout.Width(98));
-                JEEEditorStyles.DrawStatusPill("Icons", JEEMenu.IsHierarchyIconEnabled, GUILayout.Width(92));
-                JEEEditorStyles.DrawStatusPill("Project", JEEMenu.IsProjectColorsEnabled, GUILayout.Width(98));
+                JEEEditorStyles.DrawStatusLabel("Hierarchy", JEEMenu.IsHierarchyEnabled, GUILayout.Width(118));
+                JEEEditorStyles.DrawStatusLabel("Colors", JEEMenu.IsHierarchyColorEnabled, GUILayout.Width(98));
+                JEEEditorStyles.DrawStatusLabel("Icons", JEEMenu.IsHierarchyIconEnabled, GUILayout.Width(92));
+                JEEEditorStyles.DrawStatusLabel("Project", JEEMenu.IsProjectColorsEnabled, GUILayout.Width(98));
                 GUILayout.FlexibleSpace();
             }
         }
@@ -108,12 +108,12 @@ namespace JustEnoughEditor
             using (new EditorGUILayout.HorizontalScope())
             {
                 if (GUILayout.Button(
-                        new GUIContent(" Favorite Assets", EditorGUIUtility.IconContent("Folder Icon").image),
+                        new GUIContent(" Favorite Assets", JEEEditorStyles.GetIcon("Folder Icon")),
                         GUILayout.Height(28)))
                     FavoriteAssetsWindow.ShowWindow();
 
                 if (GUILayout.Button(
-                        new GUIContent(" Icon Filters", EditorGUIUtility.IconContent("d_FilterByType").image),
+                        new GUIContent(" Icon Filters", JEEEditorStyles.GetIcon("d_FilterByType")),
                         GUILayout.Height(28)))
                     IconFilterWindow.ShowWindow();
             }
@@ -121,15 +121,15 @@ namespace JustEnoughEditor
             using (new EditorGUILayout.HorizontalScope())
             {
                 if (GUILayout.Button(
-                        new GUIContent(" Missing Scripts", EditorGUIUtility.IconContent("console.erroricon").image),
+                        new GUIContent(" Missing Scripts", JEEEditorStyles.GetIcon("console.erroricon")),
                         GUILayout.Height(28)))
                     MissingScriptFinderWindow.ShowWindow();
 
-                if (GUILayout.Button(new GUIContent(" Export", EditorGUIUtility.IconContent("d_SaveAs").image),
+                if (GUILayout.Button(new GUIContent(" Export", JEEEditorStyles.GetIcon("d_SaveAs")),
                         GUILayout.Height(28)))
                     JEESettingsIO.ExportSettings();
 
-                if (GUILayout.Button(new GUIContent(" Import", EditorGUIUtility.IconContent("Import").image),
+                if (GUILayout.Button(new GUIContent(" Import", JEEEditorStyles.GetIcon("Import")),
                         GUILayout.Height(28)))
                     JEESettingsIO.ImportSettings();
             }

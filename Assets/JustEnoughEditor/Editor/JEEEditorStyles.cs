@@ -20,6 +20,7 @@ namespace JustEnoughEditor
         private static GUIStyle s_emptyBody;
         private static GUIStyle s_iconButton;
         private static GUIStyle s_pill;
+        private static GUIStyle s_statusLabel;
 
         public static GUIStyle HeaderTitle
         {
@@ -199,6 +200,21 @@ namespace JustEnoughEditor
             }
         }
 
+        public static GUIStyle StatusLabel
+        {
+            get
+            {
+                if (s_statusLabel == null)
+                    s_statusLabel = new GUIStyle(EditorStyles.miniLabel)
+                    {
+                        alignment = TextAnchor.MiddleCenter,
+                        fixedHeight = 20,
+                        padding = new RectOffset(10, 10, 2, 2)
+                    };
+                return s_statusLabel;
+            }
+        }
+
         public static GUIStyle Pill
         {
             get
@@ -258,9 +274,22 @@ namespace JustEnoughEditor
                    EditorStyles.toolbarTextField;
         }
 
-        public static void DrawStatusPill(string label, bool enabled, params GUILayoutOption[] options)
+        public static void DrawStatusLabel(string label, bool enabled, params GUILayoutOption[] options)
         {
-            GUILayout.Label(enabled ? $"{label}: ON" : $"{label}: OFF", Pill, options);
+            var rect = GUILayoutUtility.GetRect(new GUIContent(enabled ? $"{label}: ON" : $"{label}: OFF"),
+                StatusLabel, options);
+            var backgroundColor = enabled
+                ? new Color(0.18f, 0.46f, 0.27f, EditorGUIUtility.isProSkin ? 0.72f : 0.22f)
+                : new Color(0.55f, 0.22f, 0.20f, EditorGUIUtility.isProSkin ? 0.72f : 0.20f);
+            var textColor = enabled
+                ? (EditorGUIUtility.isProSkin ? new Color(0.78f, 1f, 0.82f, 1f) : new Color(0.10f, 0.38f, 0.16f, 1f))
+                : (EditorGUIUtility.isProSkin ? new Color(1f, 0.80f, 0.78f, 1f) : new Color(0.45f, 0.14f, 0.12f, 1f));
+
+            EditorGUI.DrawRect(rect, backgroundColor);
+            var previousColor = StatusLabel.normal.textColor;
+            StatusLabel.normal.textColor = textColor;
+            GUI.Label(rect, enabled ? $"{label}: ON" : $"{label}: OFF", StatusLabel);
+            StatusLabel.normal.textColor = previousColor;
         }
 
         public static void DrawEmptyState(string title, string body, string iconName = "console.infoicon")
@@ -268,7 +297,7 @@ namespace JustEnoughEditor
             using (new EditorGUILayout.VerticalScope(Card))
             {
                 GUILayout.Space(10);
-                var icon = EditorGUIUtility.IconContent(iconName).image;
+                var icon = GetIcon(iconName);
                 var iconRect = GUILayoutUtility.GetRect(36, 36, GUILayout.ExpandWidth(true));
                 if (icon != null)
                 {
@@ -283,13 +312,28 @@ namespace JustEnoughEditor
             }
         }
 
+        public static Texture GetIcon(params string[] iconNames)
+        {
+            foreach (var iconName in iconNames)
+            {
+                if (string.IsNullOrEmpty(iconName))
+                    continue;
+
+                var icon = EditorGUIUtility.FindTexture(iconName);
+                if (icon != null)
+                    return icon;
+            }
+
+            return null;
+        }
+
         private static void DrawCardTitle(string title, string iconName)
         {
             using (new EditorGUILayout.HorizontalScope())
             {
                 if (!string.IsNullOrEmpty(iconName))
                 {
-                    var icon = EditorGUIUtility.IconContent(iconName).image;
+                    var icon = GetIcon(iconName);
                     if (icon != null)
                         GUILayout.Label(icon, GUILayout.Width(18), GUILayout.Height(18));
                 }
