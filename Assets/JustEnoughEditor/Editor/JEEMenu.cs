@@ -46,6 +46,15 @@ namespace JustEnoughEditor
         }
 
         /// <summary>
+        /// Hierarchy のスコープガイド描画の個別トグル。
+        /// </summary>
+        public static bool IsHierarchyScopeGuideEnabled
+        {
+            get => JEEPrefs.IsHierarchyScopeGuideEnabled;
+            set => JEEPrefs.IsHierarchyScopeGuideEnabled = value;
+        }
+
+        /// <summary>
         /// アイコンがオブジェクト名テキストに重なるのを防ぐ最小水平距離（ピクセル）。
         /// 読み取り時は常に [40, 200] にクランプして書き戻す。
         /// </summary>
@@ -114,8 +123,23 @@ namespace JustEnoughEditor
             return true;
         }
 
+        /// <summary>Hierarchy のスコープガイド描画の ON/OFF を切り替える。</summary>
+        [MenuItem("JEE/Enable Hierarchy Scope Guide", false, 53)]
+        public static void ToggleHierarchyScopeGuide()
+        {
+            IsHierarchyScopeGuideEnabled = !IsHierarchyScopeGuideEnabled;
+            EditorApplication.RepaintHierarchyWindow();
+        }
+
+        [MenuItem("JEE/Enable Hierarchy Scope Guide", true)]
+        public static bool ValidateToggleHierarchyScopeGuide()
+        {
+            Menu.SetChecked("JEE/Enable Hierarchy Scope Guide", IsHierarchyScopeGuideEnabled);
+            return true;
+        }
+
         /// <summary>Favorite Assets のプロジェクトウィンドウ色付けの ON/OFF を切り替える。</summary>
-        [MenuItem("JEE/Enable Favorite Assets Extension", false, 53)]
+        [MenuItem("JEE/Enable Favorite Assets Extension", false, 54)]
         public static void ToggleProjectColors()
         {
             IsProjectColorsEnabled = !IsProjectColorsEnabled;
@@ -130,14 +154,14 @@ namespace JustEnoughEditor
         }
 
         /// <summary>アイコンフィルター設定ウィンドウを開く。</summary>
-        [MenuItem("JEE/Icon Filter Settings", false, 60)]
+        [MenuItem("JEE/Icon Filter Settings", false, 61)]
         public static void OpenIconFilterWindow()
         {
             IconFilterWindow.ShowWindow();
         }
 
         /// <summary>Missing Script Finder ウィンドウを開く。</summary>
-        [MenuItem("JEE/Missing Script Finder", false, 60)]
+        [MenuItem("JEE/Missing Script Finder", false, 62)]
         public static void OpenMissingScriptFinderWindow()
         {
             MissingScriptFinderWindow.ShowWindow();
@@ -156,7 +180,7 @@ namespace JustEnoughEditor
         }
 
         /// <summary>Overlap Guard を 40px に設定する。</summary>
-        [MenuItem("JEE/Icon Overlap Guard/40px", false, 61)]
+        [MenuItem("JEE/Icon Overlap Guard/40px", false, 63)]
         public static void SetOverlapGuard40()
         {
             OverlapGuard = 40;
@@ -164,7 +188,7 @@ namespace JustEnoughEditor
         }
 
         /// <summary>Overlap Guard を 80px に設定する。</summary>
-        [MenuItem("JEE/Icon Overlap Guard/80px", false, 62)]
+        [MenuItem("JEE/Icon Overlap Guard/80px", false, 64)]
         public static void SetOverlapGuard80()
         {
             OverlapGuard = 80;
@@ -172,7 +196,7 @@ namespace JustEnoughEditor
         }
 
         /// <summary>Overlap Guard を 120px に設定する。</summary>
-        [MenuItem("JEE/Icon Overlap Guard/120px", false, 63)]
+        [MenuItem("JEE/Icon Overlap Guard/120px", false, 65)]
         public static void SetOverlapGuard120()
         {
             OverlapGuard = 120;
@@ -180,7 +204,7 @@ namespace JustEnoughEditor
         }
 
         /// <summary>Overlap Guard を 160px に設定する。</summary>
-        [MenuItem("JEE/Icon Overlap Guard/160px", false, 64)]
+        [MenuItem("JEE/Icon Overlap Guard/160px", false, 66)]
         public static void SetOverlapGuard160()
         {
             OverlapGuard = 160;
@@ -188,7 +212,7 @@ namespace JustEnoughEditor
         }
 
         /// <summary>Overlap Guard を 200px に設定する。</summary>
-        [MenuItem("JEE/Icon Overlap Guard/200px", false, 65)]
+        [MenuItem("JEE/Icon Overlap Guard/200px", false, 67)]
         public static void SetOverlapGuard200()
         {
             OverlapGuard = 200;

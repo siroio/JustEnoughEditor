@@ -19,6 +19,7 @@ namespace JustEnoughEditor
         public bool projectColorsEnabled;
         public bool hierarchyColorEnabled;
         public bool hierarchyIconEnabled;
+        public bool hierarchyScopeGuideEnabled;
         public int overlapGuard;
         public int maxIconCount;
         public JEEComponentPriorityMode componentPriorityMode;
@@ -38,6 +39,7 @@ namespace JustEnoughEditor
         private const string k_ProjectToggleKey = "JEE_ProjectFavoriteColorsEnabled";
         private const string k_HierarchyColorToggleKey = "JEE_HierarchyColorEnabled";
         private const string k_HierarchyIconToggleKey = "JEE_HierarchyIconEnabled";
+        private const string k_HierarchyScopeGuideToggleKey = "JEE_HierarchyScopeGuideEnabled";
         private const string k_OverlapGuardKey = "JEE_IconOverlapGuard";
         private const string k_MaxIconCountKey = "JEE_MaxIconCount";
         private const string k_ComponentPriorityModeKey = "JEE_ComponentPriorityMode";
@@ -64,6 +66,12 @@ namespace JustEnoughEditor
         {
             get => EditorPrefs.GetBool(k_HierarchyIconToggleKey, true);
             set => EditorPrefs.SetBool(k_HierarchyIconToggleKey, value);
+        }
+
+        public static bool IsHierarchyScopeGuideEnabled
+        {
+            get => EditorPrefs.GetBool(k_HierarchyScopeGuideToggleKey, true);
+            set => EditorPrefs.SetBool(k_HierarchyScopeGuideToggleKey, value);
         }
 
         public static int OverlapGuard
@@ -109,6 +117,7 @@ namespace JustEnoughEditor
                 projectColorsEnabled = IsProjectColorsEnabled,
                 hierarchyColorEnabled = IsHierarchyColorEnabled,
                 hierarchyIconEnabled = IsHierarchyIconEnabled,
+                hierarchyScopeGuideEnabled = IsHierarchyScopeGuideEnabled,
                 overlapGuard = OverlapGuard,
                 maxIconCount = MaxIconCount,
                 componentPriorityMode = ComponentPriorityMode,
@@ -124,6 +133,7 @@ namespace JustEnoughEditor
             IsProjectColorsEnabled = settings.projectColorsEnabled;
             IsHierarchyColorEnabled = settings.hierarchyColorEnabled;
             IsHierarchyIconEnabled = settings.hierarchyIconEnabled;
+            IsHierarchyScopeGuideEnabled = settings.hierarchyScopeGuideEnabled;
             OverlapGuard = settings.overlapGuard;
             MaxIconCount = settings.maxIconCount;
             ComponentPriorityMode = settings.componentPriorityMode;

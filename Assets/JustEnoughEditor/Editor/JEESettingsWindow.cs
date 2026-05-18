@@ -42,6 +42,7 @@ namespace JustEnoughEditor
                 JEEEditorStyles.DrawStatusLabel("Hierarchy", JEEMenu.IsHierarchyEnabled, GUILayout.Width(118));
                 JEEEditorStyles.DrawStatusLabel("Colors", JEEMenu.IsHierarchyColorEnabled, GUILayout.Width(98));
                 JEEEditorStyles.DrawStatusLabel("Icons", JEEMenu.IsHierarchyIconEnabled, GUILayout.Width(92));
+                JEEEditorStyles.DrawStatusLabel("Scope", JEEMenu.IsHierarchyScopeGuideEnabled, GUILayout.Width(96));
                 JEEEditorStyles.DrawStatusLabel("Project", JEEMenu.IsProjectColorsEnabled, GUILayout.Width(98));
                 GUILayout.FlexibleSpace();
             }
@@ -55,6 +56,7 @@ namespace JustEnoughEditor
             var hierarchyEnabled = EditorGUILayout.ToggleLeft("Enable Hierarchy Extension", JEEMenu.IsHierarchyEnabled);
             var colorsEnabled = EditorGUILayout.ToggleLeft("Draw hierarchy colors", JEEMenu.IsHierarchyColorEnabled);
             var iconsEnabled = EditorGUILayout.ToggleLeft("Draw component icons", JEEMenu.IsHierarchyIconEnabled);
+            var scopeGuideEnabled = EditorGUILayout.ToggleLeft("Draw selected scope guide", JEEMenu.IsHierarchyScopeGuideEnabled);
             EditorGUILayout.Space(4);
             var overlapGuard = EditorGUILayout.IntSlider("Icon Overlap Guard", JEEMenu.OverlapGuard, 40, 200);
             var maxIconCount = EditorGUILayout.IntSlider("Max Icon Count", JEEPrefs.MaxIconCount, 2, 8);
@@ -67,6 +69,7 @@ namespace JustEnoughEditor
                 JEEMenu.IsHierarchyEnabled = hierarchyEnabled;
                 JEEMenu.IsHierarchyColorEnabled = colorsEnabled;
                 JEEMenu.IsHierarchyIconEnabled = iconsEnabled;
+                JEEMenu.IsHierarchyScopeGuideEnabled = scopeGuideEnabled;
                 JEEMenu.OverlapGuard = overlapGuard;
                 JEEPrefs.MaxIconCount = maxIconCount;
                 JEEPrefs.ComponentPriorityMode = priorityMode;

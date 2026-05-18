@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEditor;
+using UnityEditorInternal;
 using UnityEngine;
 using UnityEngine.AI;
 using UnityEngine.UI;
@@ -18,6 +19,11 @@ namespace JustEnoughEditor
     {
         /// <summary>カスタムアイコン GUID を EditorPrefs に保存する際のキープレフィックス。</summary>
         private const string k_CustomIconKeyPrefix = "JEE_CustomIcon_";
+
+        private const float k_HierarchyIndentWidth = 14f;
+        private const float k_SelectedScopeGuideOffset = 12f;
+        private const float k_SelectedScopeGuideTopInset = 2f;
+        private const float k_SelectedScopeGuideThickness = 2f;
 
         /// <summary>階層の深さに応じた背景色パレット（最大32階層）。</summary>
         private static readonly Color[] s_depthColors = new Color[32];
@@ -81,6 +87,9 @@ namespace JustEnoughEditor
         /// <summary>instanceID から UnityEngine.Object を取得するリフレクション経由のデリゲート。</summary>
         private static Func<int, Object> s_getInstanceIDToObject;
 
+        /// <summary>Hierarchy の展開状態を取得するリフレクション経由のデリゲート。</summary>
+        private static Func<int[]> s_getExpandedGameObjectIDs;
+
         static HierarchyColorAndIconDrawer()
         {
             Initialize();
@@ -115,17 +124,32 @@ namespace JustEnoughEditor
                 s_getInstanceIDToObject = (Func<int, Object>)Delegate.CreateDelegate(
                     typeof(Func<int, Object>), method);
 
+            var expandedMethod = typeof(InternalEditorUtility).GetMethod(
+                "GetExpandedGameObjects",
+                BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+
+            if (expandedMethod != null)
+                s_getExpandedGameObjectIDs = () => (int[])expandedMethod.Invoke(null, null);
+
             EditorApplication.hierarchyWindowItemOnGUI -= OnHierarchyGUI;
             EditorApplication.hierarchyWindowItemOnGUI += OnHierarchyGUI;
 
             EditorApplication.hierarchyChanged -= OnHierarchyChanged;
             EditorApplication.hierarchyChanged += OnHierarchyChanged;
+
+            Selection.selectionChanged -= OnSelectionChanged;
+            Selection.selectionChanged += OnSelectionChanged;
         }
 
         /// <summary>
         /// Hierarchy の変更（アクティブ/非アクティブ切り替えなど）を検知して再描画をトリガーする。
         /// </summary>
         private static void OnHierarchyChanged()
+        {
+            EditorApplication.RepaintHierarchyWindow();
+        }
+
+        private static void OnSelectionChanged()
         {
             EditorApplication.RepaintHierarchyWindow();
         }
@@ -221,6 +245,9 @@ namespace JustEnoughEditor
                     DrawBackgroundAndDepthBar(obj, selectionRect);
             }
 
+            if (JEEMenu.IsHierarchyColorEnabled && JEEMenu.IsHierarchyScopeGuideEnabled)
+                DrawSelectedScopeGuide(obj, selectionRect);
+
             if (JEEMenu.IsHierarchyIconEnabled)
                 DrawComponentIcons(obj, selectionRect);
         }
@@ -294,6 +321,50 @@ namespace JustEnoughEditor
 
             EditorGUI.DrawRect(new Rect(selectionRect.x - 4, selectionRect.y, 2, selectionRect.height),
                 new Color(bgColor.r, bgColor.g, bgColor.b, 1f));
+        }
+
+        /// <summary>
+        /// 選択中の GameObject とその子孫だけに、選択階層のスコープを示すガイド線を描画する。
+        /// </summary>
+        private static void DrawSelectedScopeGuide(GameObject obj, Rect selectionRect)
+        {
+            if (Event.current.type != EventType.Repaint) return;
+
+            var selected = Selection.activeGameObject;
+            if (selected == null || !IsInSelectedScope(obj.transform, selected.transform)) return;
+            if (obj == selected && IsLastVisibleInSelectedScope(obj.transform, selected.transform)) return;
+
+            var selectedDepth = GetDepth(selected.transform);
+            var currentDepth = GetDepth(obj.transform);
+            var guideX = selectionRect.x - (currentDepth - selectedDepth) * k_HierarchyIndentWidth - 4f;
+
+            var scopeColor = s_depthColors[Mathf.Min(selectedDepth, s_depthColors.Length - 1)];
+            scopeColor.a = EditorGUIUtility.isProSkin ? 0.95f : 0.85f;
+            var isLastVisible = IsLastVisibleInSelectedScope(obj.transform, selected.transform);
+            var endLineY = selectionRect.y + selectionRect.height * 0.5f -
+                           (k_SelectedScopeGuideThickness * 0.5f);
+            var guideHeight = isLastVisible
+                ? endLineY + k_SelectedScopeGuideThickness - selectionRect.y
+                : selectionRect.height;
+
+            var guideRect = new Rect(
+                guideX,
+                selectionRect.y,
+                k_SelectedScopeGuideThickness,
+                guideHeight);
+            if (guideRect.height <= 0f) return;
+            EditorGUI.DrawRect(guideRect, scopeColor);
+
+            if (isLastVisible)
+            {
+                var endRect = new Rect(
+                    guideX,
+                    endLineY,
+                    Mathf.Max(4f, selectionRect.x - guideX - 6f),
+                    k_SelectedScopeGuideThickness);
+                EditorGUI.DrawRect(endRect, scopeColor);
+            }
+
         }
 
         /// <summary>
@@ -563,6 +634,63 @@ namespace JustEnoughEditor
             }
 
             return depth;
+        }
+
+        private static bool IsInSelectedScope(Transform target, Transform selected)
+        {
+            return target == selected || target.IsChildOf(selected);
+        }
+
+        private static bool IsLastVisibleInSelectedScope(Transform current, Transform selected)
+        {
+            var next = GetNextVisibleTransform(current);
+            while (next != null)
+            {
+                if (next == selected || next.IsChildOf(selected))
+                    return false;
+
+                next = GetNextVisibleTransform(next);
+            }
+
+            return true;
+        }
+
+        private static Transform GetNextVisibleTransform(Transform current)
+        {
+            if (IsExpanded(current) && current.childCount > 0)
+                return current.GetChild(0);
+
+            while (current != null)
+            {
+                var parent = current.parent;
+                if (parent == null) return null;
+
+                var siblingIndex = current.GetSiblingIndex();
+                if (siblingIndex + 1 < parent.childCount)
+                    return parent.GetChild(siblingIndex + 1);
+
+                current = parent;
+            }
+
+            return null;
+        }
+
+        private static bool IsExpanded(Transform t)
+        {
+            if (s_getExpandedGameObjectIDs == null)
+                return true;
+
+            var expandedObjects = s_getExpandedGameObjectIDs();
+            if (expandedObjects == null)
+                return true;
+
+            var instanceID = t.gameObject.GetInstanceID();
+
+            for (var i = 0; i < expandedObjects.Length; i++)
+                if (expandedObjects[i] == instanceID)
+                    return true;
+
+            return false;
         }
     }
 }
