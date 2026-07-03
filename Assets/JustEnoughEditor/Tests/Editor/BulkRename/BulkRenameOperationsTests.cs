@@ -137,5 +137,35 @@ namespace JustEnoughEditor.BulkRename.Tests
 
             Assert.AreEqual("", BulkRenameOperations.GenerateNewName("Short", 0, settings));
         }
+
+        [Test]
+        public void ApplySequentialNumber_AppendsAsSuffixByDefault()
+        {
+            var settings = new BulkRenameSettings
+            {
+                Mode = RenameMode.SequentialNumber,
+                StartNumber = 1,
+                Digits = 2,
+                NumberSeparator = "_"
+            };
+
+            Assert.AreEqual("Enemy_01", BulkRenameOperations.GenerateNewName("Enemy", 0, settings));
+            Assert.AreEqual("Enemy_02", BulkRenameOperations.GenerateNewName("Enemy", 1, settings));
+        }
+
+        [Test]
+        public void ApplySequentialNumber_CanPrependAsPrefix()
+        {
+            var settings = new BulkRenameSettings
+            {
+                Mode = RenameMode.SequentialNumber,
+                StartNumber = 1,
+                Digits = 3,
+                NumberPosition = NumberPosition.Prefix,
+                NumberSeparator = "-"
+            };
+
+            Assert.AreEqual("001-Enemy", BulkRenameOperations.GenerateNewName("Enemy", 0, settings));
+        }
     }
 }

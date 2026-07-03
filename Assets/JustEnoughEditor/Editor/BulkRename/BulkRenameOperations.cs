@@ -53,6 +53,8 @@ namespace JustEnoughEditor.BulkRename
                     return ApplyFindReplace(currentName, settings);
                 case RenameMode.AddPrefixSuffix:
                     return ApplyAddPrefixSuffix(currentName, settings);
+                case RenameMode.SequentialNumber:
+                    return ApplySequentialNumber(currentName, index, settings);
                 default:
                     return currentName;
             }
@@ -101,6 +103,14 @@ namespace JustEnoughEditor.BulkRename
             name = name.Substring(0, name.Length - removeEnd);
 
             return (settings.AddPrefix ?? "") + name + (settings.AddSuffix ?? "");
+        }
+
+        public static string ApplySequentialNumber(string currentName, int index, BulkRenameSettings settings)
+        {
+            var number = FormatNumber(index, settings);
+            return settings.NumberPosition == NumberPosition.Prefix
+                ? number + settings.NumberSeparator + currentName
+                : currentName + settings.NumberSeparator + number;
         }
 
         public static string FormatNumber(int index, BulkRenameSettings settings)
