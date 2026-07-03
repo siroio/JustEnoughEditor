@@ -214,5 +214,24 @@ namespace JustEnoughEditor.BulkRename.Tests
 
             Assert.AreEqual("01_Enemy", BulkRenameOperations.GenerateNewName("Old1", 0, settings));
         }
+
+        [Test]
+        public void IsValidFileName_TrueForOrdinaryName()
+        {
+            Assert.IsTrue(BulkRenameOperations.IsValidFileName("Enemy_01"));
+        }
+
+        [Test]
+        public void IsValidFileName_FalseForEmptyName()
+        {
+            Assert.IsFalse(BulkRenameOperations.IsValidFileName(""));
+        }
+
+        [Test]
+        public void IsValidFileName_FalseForNameWithInvalidCharacter()
+        {
+            Assert.IsFalse(BulkRenameOperations.IsValidFileName("Enemy:01"));
+            Assert.IsFalse(BulkRenameOperations.IsValidFileName("Enemy/01"));
+        }
     }
 }

@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 
 namespace JustEnoughEditor.BulkRename
 {
@@ -133,6 +134,14 @@ namespace JustEnoughEditor.BulkRename
             if (!settings.AppendNumber) return baseName;
 
             return PositionNumber(baseName, index, settings);
+        }
+
+        public static bool IsValidFileName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+
+            var invalidChars = Path.GetInvalidFileNameChars();
+            return name.IndexOfAny(invalidChars) < 0;
         }
     }
 }
