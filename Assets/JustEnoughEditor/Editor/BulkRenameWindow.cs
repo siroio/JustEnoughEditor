@@ -95,7 +95,7 @@ namespace JustEnoughEditor
 
         private void DrawNumberFields()
         {
-            settings.StartNumber = EditorGUILayout.IntField("Start Number", settings.StartNumber);
+            settings.StartNumber = Mathf.Max(0, EditorGUILayout.IntField("Start Number", settings.StartNumber));
             settings.Digits = EditorGUILayout.IntField("Digits", settings.Digits);
             settings.NumberPosition = (NumberPosition)EditorGUILayout.EnumPopup("Position", settings.NumberPosition);
             settings.NumberSeparator = EditorGUILayout.TextField("Separator", settings.NumberSeparator);
