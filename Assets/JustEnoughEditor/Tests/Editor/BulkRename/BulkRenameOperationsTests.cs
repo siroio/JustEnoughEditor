@@ -30,5 +30,60 @@ namespace JustEnoughEditor.BulkRename.Tests
 
             Assert.AreEqual("100", BulkRenameOperations.FormatNumber(1, settings));
         }
+
+        [Test]
+        public void ApplyFindReplace_ReplacesAllOccurrences()
+        {
+            var settings = new BulkRenameSettings
+            {
+                Mode = RenameMode.FindReplace,
+                FindText = "Old",
+                ReplaceText = "New",
+                CaseSensitive = true
+            };
+
+            Assert.AreEqual("New_New_Thing", BulkRenameOperations.GenerateNewName("Old_Old_Thing", 0, settings));
+        }
+
+        [Test]
+        public void ApplyFindReplace_IsCaseSensitiveByDefault()
+        {
+            var settings = new BulkRenameSettings
+            {
+                Mode = RenameMode.FindReplace,
+                FindText = "old",
+                ReplaceText = "new",
+                CaseSensitive = true
+            };
+
+            Assert.AreEqual("Old_Thing", BulkRenameOperations.GenerateNewName("Old_Thing", 0, settings));
+        }
+
+        [Test]
+        public void ApplyFindReplace_CanIgnoreCase()
+        {
+            var settings = new BulkRenameSettings
+            {
+                Mode = RenameMode.FindReplace,
+                FindText = "old",
+                ReplaceText = "new",
+                CaseSensitive = false
+            };
+
+            Assert.AreEqual("new_new_Thing", BulkRenameOperations.GenerateNewName("Old_OLD_Thing", 0, settings));
+        }
+
+        [Test]
+        public void ApplyFindReplace_EmptyFindTextReturnsNameUnchanged()
+        {
+            var settings = new BulkRenameSettings
+            {
+                Mode = RenameMode.FindReplace,
+                FindText = "",
+                ReplaceText = "new"
+            };
+
+            Assert.AreEqual("Thing", BulkRenameOperations.GenerateNewName("Thing", 0, settings));
+        }
     }
 }

@@ -47,7 +47,45 @@ namespace JustEnoughEditor.BulkRename
     {
         public static string GenerateNewName(string currentName, int index, BulkRenameSettings settings)
         {
-            return currentName;
+            switch (settings.Mode)
+            {
+                case RenameMode.FindReplace:
+                    return ApplyFindReplace(currentName, settings);
+                default:
+                    return currentName;
+            }
+        }
+
+        public static string ApplyFindReplace(string currentName, BulkRenameSettings settings)
+        {
+            if (string.IsNullOrEmpty(settings.FindText)) return currentName;
+
+            if (settings.CaseSensitive)
+                return currentName.Replace(settings.FindText, settings.ReplaceText ?? "");
+
+            return ReplaceCaseInsensitive(currentName, settings.FindText, settings.ReplaceText ?? "");
+        }
+
+        private static string ReplaceCaseInsensitive(string source, string find, string replace)
+        {
+            var result = new System.Text.StringBuilder();
+            var searchStart = 0;
+
+            while (true)
+            {
+                var index = source.IndexOf(find, searchStart, StringComparison.OrdinalIgnoreCase);
+                if (index < 0)
+                {
+                    result.Append(source, searchStart, source.Length - searchStart);
+                    break;
+                }
+
+                result.Append(source, searchStart, index - searchStart);
+                result.Append(replace);
+                searchStart = index + find.Length;
+            }
+
+            return result.ToString();
         }
 
         public static string FormatNumber(int index, BulkRenameSettings settings)
