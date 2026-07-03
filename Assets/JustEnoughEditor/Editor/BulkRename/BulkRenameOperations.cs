@@ -109,10 +109,7 @@ namespace JustEnoughEditor.BulkRename
 
         public static string ApplySequentialNumber(string currentName, int index, BulkRenameSettings settings)
         {
-            var number = FormatNumber(index, settings);
-            return settings.NumberPosition == NumberPosition.Prefix
-                ? number + settings.NumberSeparator + currentName
-                : currentName + settings.NumberSeparator + number;
+            return PositionNumber(currentName, index, settings);
         }
 
         public static string FormatNumber(int index, BulkRenameSettings settings)
@@ -122,15 +119,20 @@ namespace JustEnoughEditor.BulkRename
             return number.ToString().PadLeft(digits, '0');
         }
 
+        private static string PositionNumber(string name, int index, BulkRenameSettings settings)
+        {
+            var number = FormatNumber(index, settings);
+            return settings.NumberPosition == NumberPosition.Prefix
+                ? number + settings.NumberSeparator + name
+                : name + settings.NumberSeparator + number;
+        }
+
         public static string ApplyReplaceAll(int index, BulkRenameSettings settings)
         {
             var baseName = settings.NewBaseName ?? "";
             if (!settings.AppendNumber) return baseName;
 
-            var number = FormatNumber(index, settings);
-            return settings.NumberPosition == NumberPosition.Prefix
-                ? number + settings.NumberSeparator + baseName
-                : baseName + settings.NumberSeparator + number;
+            return PositionNumber(baseName, index, settings);
         }
     }
 }
