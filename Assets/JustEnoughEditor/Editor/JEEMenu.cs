@@ -78,6 +78,13 @@ namespace JustEnoughEditor
             JEESettingsWindow.ShowWindow();
         }
 
+        /// <summary>Bulk Rename ウィンドウを開く。</summary>
+        [MenuItem("JEE/Bulk Rename", false, 3)]
+        public static void OpenBulkRenameWindow()
+        {
+            BulkRenameWindow.ShowWindow();
+        }
+
         /// <summary>Hierarchy 拡張機能全体の ON/OFF を切り替える。</summary>
         [MenuItem("JEE/Enable Hierarchy Extension", false, 50)]
         public static void ToggleHierarchyExtension()

@@ -29,6 +29,30 @@ namespace JustEnoughEditor
             return HierarchyColorAndIconDrawer.HasCustomIcon(Selection.activeGameObject);
         }
 
+        [MenuItem("GameObject/JEE/Bulk Rename...", false, 42)]
+        public static void BulkRenameFromHierarchy()
+        {
+            BulkRenameWindow.ShowWindow();
+        }
+
+        [MenuItem("GameObject/JEE/Bulk Rename...", true)]
+        public static bool ValidateBulkRenameFromHierarchy()
+        {
+            return Selection.gameObjects.Length > 0;
+        }
+
+        [MenuItem("Assets/JEE/Bulk Rename...", false, 42)]
+        public static void BulkRenameFromAssets()
+        {
+            BulkRenameWindow.ShowWindow();
+        }
+
+        [MenuItem("Assets/JEE/Bulk Rename...", true)]
+        public static bool ValidateBulkRenameFromAssets()
+        {
+            return Selection.objects.Length > 0;
+        }
+
         [MenuItem("JEE/Create Section Separator", false, 20)]
         public static void CreateSectionSeparator()
         {
