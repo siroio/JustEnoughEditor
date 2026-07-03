@@ -55,6 +55,8 @@ namespace JustEnoughEditor.BulkRename
                     return ApplyAddPrefixSuffix(currentName, settings);
                 case RenameMode.SequentialNumber:
                     return ApplySequentialNumber(currentName, index, settings);
+                case RenameMode.ReplaceAll:
+                    return ApplyReplaceAll(index, settings);
                 default:
                     return currentName;
             }
@@ -118,6 +120,17 @@ namespace JustEnoughEditor.BulkRename
             var number = settings.StartNumber + index;
             var digits = Math.Max(1, settings.Digits);
             return number.ToString().PadLeft(digits, '0');
+        }
+
+        public static string ApplyReplaceAll(int index, BulkRenameSettings settings)
+        {
+            var baseName = settings.NewBaseName ?? "";
+            if (!settings.AppendNumber) return baseName;
+
+            var number = FormatNumber(index, settings);
+            return settings.NumberPosition == NumberPosition.Prefix
+                ? number + settings.NumberSeparator + baseName
+                : baseName + settings.NumberSeparator + number;
         }
     }
 }

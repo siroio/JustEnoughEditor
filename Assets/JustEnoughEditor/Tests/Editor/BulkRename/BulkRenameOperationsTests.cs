@@ -167,5 +167,52 @@ namespace JustEnoughEditor.BulkRename.Tests
 
             Assert.AreEqual("001-Enemy", BulkRenameOperations.GenerateNewName("Enemy", 0, settings));
         }
+
+        [Test]
+        public void ApplyReplaceAll_ReplacesNameWithBaseNameOnly()
+        {
+            var settings = new BulkRenameSettings
+            {
+                Mode = RenameMode.ReplaceAll,
+                NewBaseName = "Enemy",
+                AppendNumber = false
+            };
+
+            Assert.AreEqual("Enemy", BulkRenameOperations.GenerateNewName("AnythingAtAll", 0, settings));
+        }
+
+        [Test]
+        public void ApplyReplaceAll_AppendsNumberWhenEnabled()
+        {
+            var settings = new BulkRenameSettings
+            {
+                Mode = RenameMode.ReplaceAll,
+                NewBaseName = "Enemy",
+                AppendNumber = true,
+                StartNumber = 1,
+                Digits = 2,
+                NumberSeparator = "_"
+            };
+
+            Assert.AreEqual("Enemy_01", BulkRenameOperations.GenerateNewName("Old1", 0, settings));
+            Assert.AreEqual("Enemy_02", BulkRenameOperations.GenerateNewName("Old2", 1, settings));
+        }
+
+        [Test]
+        public void ApplyReplaceAll_CanPrependNumber()
+        {
+            var settings = new BulkRenameSettings
+            {
+                Mode = RenameMode.ReplaceAll,
+                NewBaseName = "Enemy",
+                AppendNumber = true,
+                StartNumber = 1,
+                Digits = 2,
+                NumberPosition = NumberPosition.Prefix,
+                NumberSeparator = "_"
+            };
+
+            Assert.AreEqual("01_Enemy", BulkRenameOperations.GenerateNewName("Old1", 0, settings));
+        }
     }
 }
