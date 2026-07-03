@@ -85,5 +85,57 @@ namespace JustEnoughEditor.BulkRename.Tests
 
             Assert.AreEqual("Thing", BulkRenameOperations.GenerateNewName("Thing", 0, settings));
         }
+
+        [Test]
+        public void ApplyAddPrefixSuffix_AddsPrefixAndSuffix()
+        {
+            var settings = new BulkRenameSettings
+            {
+                Mode = RenameMode.AddPrefixSuffix,
+                AddPrefix = "FX_",
+                AddSuffix = "_v2"
+            };
+
+            Assert.AreEqual("FX_Enemy_v2", BulkRenameOperations.GenerateNewName("Enemy", 0, settings));
+        }
+
+        [Test]
+        public void ApplyAddPrefixSuffix_RemovesCharsFromStartAndEnd()
+        {
+            var settings = new BulkRenameSettings
+            {
+                Mode = RenameMode.AddPrefixSuffix,
+                RemoveFromStart = 3,
+                RemoveFromEnd = 2
+            };
+
+            Assert.AreEqual("my", BulkRenameOperations.GenerateNewName("OLDmyXX", 0, settings));
+        }
+
+        [Test]
+        public void ApplyAddPrefixSuffix_RemovalHappensBeforeAdding()
+        {
+            var settings = new BulkRenameSettings
+            {
+                Mode = RenameMode.AddPrefixSuffix,
+                RemoveFromStart = 4,
+                AddPrefix = "New_"
+            };
+
+            Assert.AreEqual("New_Enemy", BulkRenameOperations.GenerateNewName("Old_Enemy", 0, settings));
+        }
+
+        [Test]
+        public void ApplyAddPrefixSuffix_ClampsRemovalCountsToNameLength()
+        {
+            var settings = new BulkRenameSettings
+            {
+                Mode = RenameMode.AddPrefixSuffix,
+                RemoveFromStart = 100,
+                RemoveFromEnd = 100
+            };
+
+            Assert.AreEqual("", BulkRenameOperations.GenerateNewName("Short", 0, settings));
+        }
     }
 }

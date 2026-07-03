@@ -51,6 +51,8 @@ namespace JustEnoughEditor.BulkRename
             {
                 case RenameMode.FindReplace:
                     return ApplyFindReplace(currentName, settings);
+                case RenameMode.AddPrefixSuffix:
+                    return ApplyAddPrefixSuffix(currentName, settings);
                 default:
                     return currentName;
             }
@@ -86,6 +88,19 @@ namespace JustEnoughEditor.BulkRename
             }
 
             return result.ToString();
+        }
+
+        public static string ApplyAddPrefixSuffix(string currentName, BulkRenameSettings settings)
+        {
+            var name = currentName;
+
+            var removeStart = Math.Max(0, Math.Min(settings.RemoveFromStart, name.Length));
+            name = name.Substring(removeStart);
+
+            var removeEnd = Math.Max(0, Math.Min(settings.RemoveFromEnd, name.Length));
+            name = name.Substring(0, name.Length - removeEnd);
+
+            return (settings.AddPrefix ?? "") + name + (settings.AddSuffix ?? "");
         }
 
         public static string FormatNumber(int index, BulkRenameSettings settings)
