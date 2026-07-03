@@ -230,8 +230,19 @@ namespace JustEnoughEditor.BulkRename.Tests
         [Test]
         public void IsValidFileName_FalseForNameWithInvalidCharacter()
         {
-            Assert.IsFalse(BulkRenameOperations.IsValidFileName("Enemy:01"));
-            Assert.IsFalse(BulkRenameOperations.IsValidFileName("Enemy/01"));
+            var invalidChars = System.IO.Path.GetInvalidFileNameChars();
+            Assert.IsTrue(invalidChars.Length > 0, "Expected at least one invalid filename character");
+
+            // Test with the first invalid character
+            var testName = "Enemy" + invalidChars[0] + "01";
+            Assert.IsFalse(BulkRenameOperations.IsValidFileName(testName));
+
+            // If there's a second invalid character, test that too
+            if (invalidChars.Length > 1)
+            {
+                testName = "Enemy" + invalidChars[1] + "01";
+                Assert.IsFalse(BulkRenameOperations.IsValidFileName(testName));
+            }
         }
     }
 }
