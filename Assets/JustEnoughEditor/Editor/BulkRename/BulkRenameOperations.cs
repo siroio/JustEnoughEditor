@@ -157,5 +157,57 @@ namespace JustEnoughEditor.BulkRename
             var invalidChars = Path.GetInvalidFileNameChars();
             return name.IndexOfAny(invalidChars) < 0;
         }
+
+        // ---- ステップチェーン方式 (v2) ----
+
+        /// <summary>パイプラインの全ステップを順に適用した新しい名前を返す。Enabled=false のステップはスキップする。</summary>
+        public static string GenerateNewName(string currentName, int index, RenamePipeline pipeline)
+        {
+            var name = currentName;
+
+            foreach (var step in pipeline.Steps)
+            {
+                if (step == null || !step.Enabled) continue;
+                name = ApplyStep(name, currentName, index, step, pipeline);
+            }
+
+            return name;
+        }
+
+        /// <summary>1 ステップ分の変換を適用する。originalName はパイプライン入力時点の名前。</summary>
+        public static string ApplyStep(string name, string originalName, int index, RenameStep step, RenamePipeline pipeline)
+        {
+            switch (step.Type)
+            {
+                case RenameStepType.FindReplace:
+                    return ApplyFindReplaceStep(name, step);
+                case RenameStepType.AddPrefixSuffix:
+                    return (step.AddPrefix ?? "") + name + (step.AddSuffix ?? "");
+                case RenameStepType.RemoveCharacters:
+                    return RemoveCharacters(name, step.RemoveFromStart, step.RemoveFromEnd);
+                case RenameStepType.SetName:
+                    return step.NamePattern ?? "";
+                default:
+                    return name;
+            }
+        }
+
+        private static string ApplyFindReplaceStep(string name, RenameStep step)
+        {
+            if (string.IsNullOrEmpty(step.FindText)) return name;
+
+            var replace = step.ReplaceText ?? "";
+            if (step.CaseSensitive) return name.Replace(step.FindText, replace);
+            return ReplaceCaseInsensitive(name, step.FindText, replace);
+        }
+
+        private static string RemoveCharacters(string name, int fromStart, int fromEnd)
+        {
+            var removeStart = Math.Max(0, Math.Min(fromStart, name.Length));
+            name = name.Substring(removeStart);
+
+            var removeEnd = Math.Max(0, Math.Min(fromEnd, name.Length));
+            return name.Substring(0, name.Length - removeEnd);
+        }
     }
 }
