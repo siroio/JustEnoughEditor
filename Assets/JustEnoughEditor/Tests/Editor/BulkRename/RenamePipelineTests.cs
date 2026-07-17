@@ -112,5 +112,63 @@ namespace JustEnoughEditor.BulkRename.Tests
 
             Assert.AreEqual("FX_Old_Enemy", BulkRenameOperations.GenerateNewName("Old_Enemy", 0, pipeline));
         }
+
+        [Test]
+        public void Regex_ReplacesWithGroupReference()
+        {
+            var pipeline = PipelineWith(new RenameStep
+            {
+                Type = RenameStepType.FindReplace, UseRegex = true,
+                FindText = @"(\d+)_(\w+)", ReplaceText = "$2_$1"
+            });
+
+            Assert.AreEqual("Enemy_01", BulkRenameOperations.GenerateNewName("01_Enemy", 0, pipeline));
+        }
+
+        [Test]
+        public void Regex_CanIgnoreCase()
+        {
+            var pipeline = PipelineWith(new RenameStep
+            {
+                Type = RenameStepType.FindReplace, UseRegex = true,
+                FindText = "enemy", ReplaceText = "Boss", CaseSensitive = false
+            });
+
+            Assert.AreEqual("Boss_01", BulkRenameOperations.GenerateNewName("ENEMY_01", 0, pipeline));
+        }
+
+        [Test]
+        public void TryValidate_FailsForInvalidRegexPattern()
+        {
+            var pipeline = PipelineWith(new RenameStep
+            {
+                Type = RenameStepType.FindReplace, UseRegex = true, FindText = "("
+            });
+
+            Assert.IsFalse(BulkRenameOperations.TryValidate(pipeline, out var error));
+            Assert.IsNotEmpty(error);
+        }
+
+        [Test]
+        public void TryValidate_PassesForValidRegexAndLiteralSteps()
+        {
+            var pipeline = PipelineWith(
+                new RenameStep { Type = RenameStepType.FindReplace, UseRegex = true, FindText = @"\d+" },
+                new RenameStep { Type = RenameStepType.FindReplace, FindText = "(" });
+
+            Assert.IsTrue(BulkRenameOperations.TryValidate(pipeline, out var error));
+            Assert.IsNull(error);
+        }
+
+        [Test]
+        public void TryValidate_IgnoresDisabledSteps()
+        {
+            var pipeline = PipelineWith(new RenameStep
+            {
+                Type = RenameStepType.FindReplace, UseRegex = true, FindText = "(", Enabled = false
+            });
+
+            Assert.IsTrue(BulkRenameOperations.TryValidate(pipeline, out var error));
+        }
     }
 }

@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Text.RegularExpressions;
 
 namespace JustEnoughEditor.BulkRename
 {
@@ -197,6 +198,14 @@ namespace JustEnoughEditor.BulkRename
             if (string.IsNullOrEmpty(step.FindText)) return name;
 
             var replace = step.ReplaceText ?? "";
+
+            if (step.UseRegex)
+            {
+                var options = step.CaseSensitive ? RegexOptions.None : RegexOptions.IgnoreCase;
+                // 破滅的バックトラッキングによるエディタのフリーズを防ぐため 1 秒でタイムアウトさせる
+                return Regex.Replace(name, step.FindText, replace, options, TimeSpan.FromSeconds(1));
+            }
+
             if (step.CaseSensitive) return name.Replace(step.FindText, replace);
             return ReplaceCaseInsensitive(name, step.FindText, replace);
         }
@@ -208,6 +217,30 @@ namespace JustEnoughEditor.BulkRename
 
             var removeEnd = Math.Max(0, Math.Min(fromEnd, name.Length));
             return name.Substring(0, name.Length - removeEnd);
+        }
+
+        /// <summary>パイプライン全体を検証する。不正な正規表現パターンを検出したら最初のエラーを返す。</summary>
+        public static bool TryValidate(RenamePipeline pipeline, out string error)
+        {
+            foreach (var step in pipeline.Steps)
+            {
+                if (step == null || !step.Enabled) continue;
+                if (step.Type != RenameStepType.FindReplace || !step.UseRegex) continue;
+                if (string.IsNullOrEmpty(step.FindText)) continue;
+
+                try
+                {
+                    _ = new Regex(step.FindText);
+                }
+                catch (ArgumentException e)
+                {
+                    error = $"Invalid regex pattern \"{step.FindText}\": {e.Message}";
+                    return false;
+                }
+            }
+
+            error = null;
+            return true;
         }
     }
 }
