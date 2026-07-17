@@ -170,5 +170,87 @@ namespace JustEnoughEditor.BulkRename.Tests
 
             Assert.IsTrue(BulkRenameOperations.TryValidate(pipeline, out var error));
         }
+
+        [Test]
+        public void FormatNumber_PadsWithStartNumberAndDigits()
+        {
+            var pipeline = new RenamePipeline { StartNumber = 1, Digits = 3 };
+
+            Assert.AreEqual("001", BulkRenameOperations.FormatNumber(0, pipeline));
+            Assert.AreEqual("002", BulkRenameOperations.FormatNumber(1, pipeline));
+        }
+
+        [Test]
+        public void FormatNumber_DoesNotTruncateWhenNumberExceedsDigits()
+        {
+            var pipeline = new RenamePipeline { StartNumber = 99, Digits = 1 };
+
+            Assert.AreEqual("100", BulkRenameOperations.FormatNumber(1, pipeline));
+        }
+
+        [Test]
+        public void NumToken_InSuffixProducesSequentialNames()
+        {
+            var pipeline = PipelineWith(new RenameStep
+            {
+                Type = RenameStepType.AddPrefixSuffix, AddSuffix = "_<num>"
+            });
+            pipeline.StartNumber = 1;
+            pipeline.Digits = 2;
+
+            Assert.AreEqual("Enemy_01", BulkRenameOperations.GenerateNewName("Enemy", 0, pipeline));
+            Assert.AreEqual("Enemy_02", BulkRenameOperations.GenerateNewName("Enemy", 1, pipeline));
+        }
+
+        [Test]
+        public void NumToken_InSetNamePattern()
+        {
+            var pipeline = PipelineWith(new RenameStep
+            {
+                Type = RenameStepType.SetName, NamePattern = "Enemy_<num>"
+            });
+            pipeline.StartNumber = 1;
+            pipeline.Digits = 3;
+
+            Assert.AreEqual("Enemy_005", BulkRenameOperations.GenerateNewName("Old", 4, pipeline));
+        }
+
+        [Test]
+        public void NameToken_ExpandsToOriginalPipelineInputName()
+        {
+            // <name> は直前ステップの結果ではなく、パイプライン入力時点の名前を指す
+            var pipeline = PipelineWith(
+                new RenameStep { Type = RenameStepType.SetName, NamePattern = "X" },
+                new RenameStep { Type = RenameStepType.AddPrefixSuffix, AddSuffix = "_<name>" });
+
+            Assert.AreEqual("X_Enemy", BulkRenameOperations.GenerateNewName("Enemy", 0, pipeline));
+        }
+
+        [Test]
+        public void NumToken_InLiteralReplaceText()
+        {
+            var pipeline = PipelineWith(new RenameStep
+            {
+                Type = RenameStepType.FindReplace, FindText = "###", ReplaceText = "<num>"
+            });
+            pipeline.StartNumber = 10;
+            pipeline.Digits = 2;
+
+            Assert.AreEqual("Enemy_10", BulkRenameOperations.GenerateNewName("Enemy_###", 0, pipeline));
+        }
+
+        [Test]
+        public void NumToken_WorksTogetherWithRegexGroupReference()
+        {
+            var pipeline = PipelineWith(new RenameStep
+            {
+                Type = RenameStepType.FindReplace, UseRegex = true,
+                FindText = "(Enemy)", ReplaceText = "$1_<num>"
+            });
+            pipeline.StartNumber = 1;
+            pipeline.Digits = 2;
+
+            Assert.AreEqual("Enemy_01", BulkRenameOperations.GenerateNewName("Enemy", 0, pipeline));
+        }
     }
 }

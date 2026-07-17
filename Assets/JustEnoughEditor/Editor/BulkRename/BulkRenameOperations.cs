@@ -175,29 +175,49 @@ namespace JustEnoughEditor.BulkRename
             return name;
         }
 
-        /// <summary>1 ステップ分の変換を適用する。originalName はパイプライン入力時点の名前。</summary>
+        /// <summary>&lt;name&gt;(パイプライン入力時点の名前)と &lt;num&gt;(連番)のトークンを展開する。</summary>
+        public static string ExpandTokens(string text, string originalName, int index, RenamePipeline pipeline)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+
+            return text
+                .Replace("<name>", originalName)
+                .Replace("<num>", FormatNumber(index, pipeline));
+        }
+
+        /// <summary>StartNumber + index を Digits 桁までゼロ埋めした連番文字列を返す。</summary>
+        public static string FormatNumber(int index, RenamePipeline pipeline)
+        {
+            var number = pipeline.StartNumber + index;
+            var digits = Math.Max(1, pipeline.Digits);
+            return number.ToString().PadLeft(digits, '0');
+        }
+
+        /// <summary>1 ステップ分の変換を適用する。originalName はパイプライン入力時点の名前(トークン &lt;name&gt; の展開に使用)。</summary>
         public static string ApplyStep(string name, string originalName, int index, RenameStep step, RenamePipeline pipeline)
         {
             switch (step.Type)
             {
                 case RenameStepType.FindReplace:
-                    return ApplyFindReplaceStep(name, step);
+                    return ApplyFindReplaceStep(name, originalName, index, step, pipeline);
                 case RenameStepType.AddPrefixSuffix:
-                    return (step.AddPrefix ?? "") + name + (step.AddSuffix ?? "");
+                    return ExpandTokens(step.AddPrefix, originalName, index, pipeline)
+                           + name
+                           + ExpandTokens(step.AddSuffix, originalName, index, pipeline);
                 case RenameStepType.RemoveCharacters:
                     return RemoveCharacters(name, step.RemoveFromStart, step.RemoveFromEnd);
                 case RenameStepType.SetName:
-                    return step.NamePattern ?? "";
+                    return ExpandTokens(step.NamePattern, originalName, index, pipeline);
                 default:
                     return name;
             }
         }
 
-        private static string ApplyFindReplaceStep(string name, RenameStep step)
+        private static string ApplyFindReplaceStep(string name, string originalName, int index, RenameStep step, RenamePipeline pipeline)
         {
             if (string.IsNullOrEmpty(step.FindText)) return name;
 
-            var replace = step.ReplaceText ?? "";
+            var replace = ExpandTokens(step.ReplaceText, originalName, index, pipeline);
 
             if (step.UseRegex)
             {
