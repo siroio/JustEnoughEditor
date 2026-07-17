@@ -329,5 +329,64 @@ namespace JustEnoughEditor.BulkRename.Tests
 
             Assert.AreEqual("MyCoolName", BulkRenameOperations.GenerateNewName("my-Cool_name", 0, pipeline));
         }
+
+        [Test]
+        public void TrimNormalize_TrimsLeadingAndTrailingWhitespace()
+        {
+            var pipeline = PipelineWith(new RenameStep
+            {
+                Type = RenameStepType.TrimNormalize, TrimWhitespace = true
+            });
+
+            Assert.AreEqual("Enemy", BulkRenameOperations.GenerateNewName("  Enemy  ", 0, pipeline));
+        }
+
+        [Test]
+        public void TrimNormalize_CollapsesWhitespaceRuns()
+        {
+            var pipeline = PipelineWith(new RenameStep
+            {
+                Type = RenameStepType.TrimNormalize,
+                TrimWhitespace = false, CollapseWhitespace = true
+            });
+
+            Assert.AreEqual("Enemy Boss", BulkRenameOperations.GenerateNewName("Enemy   Boss", 0, pipeline));
+        }
+
+        [Test]
+        public void TrimNormalize_RemovesDuplicateSuffix()
+        {
+            var pipeline = PipelineWith(new RenameStep
+            {
+                Type = RenameStepType.TrimNormalize,
+                TrimWhitespace = false, RemoveDuplicateSuffix = true
+            });
+
+            Assert.AreEqual("Enemy", BulkRenameOperations.GenerateNewName("Enemy (1)", 0, pipeline));
+        }
+
+        [Test]
+        public void TrimNormalize_DuplicateSuffixOnlyStripsAtEnd()
+        {
+            var pipeline = PipelineWith(new RenameStep
+            {
+                Type = RenameStepType.TrimNormalize,
+                TrimWhitespace = false, RemoveDuplicateSuffix = true
+            });
+
+            Assert.AreEqual("Enemy (1) Boss", BulkRenameOperations.GenerateNewName("Enemy (1) Boss", 0, pipeline));
+        }
+
+        [Test]
+        public void TrimNormalize_AllFlagsCombined()
+        {
+            var pipeline = PipelineWith(new RenameStep
+            {
+                Type = RenameStepType.TrimNormalize,
+                TrimWhitespace = true, CollapseWhitespace = true, RemoveDuplicateSuffix = true
+            });
+
+            Assert.AreEqual("Enemy Clone", BulkRenameOperations.GenerateNewName("  Enemy   Clone (3) ", 0, pipeline));
+        }
     }
 }

@@ -212,6 +212,8 @@ namespace JustEnoughEditor.BulkRename
                     return ExpandTokens(step.NamePattern, originalName, index, pipeline);
                 case RenameStepType.ChangeCase:
                     return ConvertCase(name, step.CaseConversion);
+                case RenameStepType.TrimNormalize:
+                    return ApplyTrimNormalize(name, step);
                 default:
                     return name;
             }
@@ -330,6 +332,22 @@ namespace JustEnoughEditor.BulkRename
 
             if (current.Length > 0) words.Add(current.ToString());
             return words.ToArray();
+        }
+
+        // Unity が複製時に付ける " (1)" 形式の末尾サフィックス
+        private static readonly Regex DuplicateSuffixRegex = new Regex(@"\s*\(\d+\)\s*$", RegexOptions.Compiled);
+        private static readonly Regex WhitespaceRunRegex = new Regex(@"\s{2,}", RegexOptions.Compiled);
+
+        /// <summary>トリム / 空白正規化 / 重複サフィックス除去を適用する。順序: サフィックス除去 → 空白圧縮 → トリム。</summary>
+        public static string ApplyTrimNormalize(string name, RenameStep step)
+        {
+            var result = name;
+
+            if (step.RemoveDuplicateSuffix) result = DuplicateSuffixRegex.Replace(result, "");
+            if (step.CollapseWhitespace) result = WhitespaceRunRegex.Replace(result, " ");
+            if (step.TrimWhitespace) result = result.Trim();
+
+            return result;
         }
     }
 }
