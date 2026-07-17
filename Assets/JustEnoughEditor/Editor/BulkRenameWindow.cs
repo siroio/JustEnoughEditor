@@ -43,6 +43,11 @@ namespace JustEnoughEditor
         private string lastResultMessage = "";
         private MessageType lastResultType = MessageType.Info;
 
+        // プレビュー再計算の抑制: パイプライン内容とターゲット選択が変わっていなければ、
+        // 毎フレームの OnGUI で ComputePreviews (正規表現含む) を再実行しないようキャッシュする
+        private List<PreviewEntry> cachedPreviews;
+        private string cachedPreviewKey;
+
         private GUIStyle changedStyle;
         private GUIStyle skippedStyle;
         private GUIStyle unchangedStyle;
@@ -129,7 +134,7 @@ namespace JustEnoughEditor
                 EditorGUILayout.HelpBox(validationError, MessageType.Error);
 
             EditorGUILayout.Space();
-            var previews = validationOk ? ComputePreviews() : new List<PreviewEntry>();
+            var previews = validationOk ? GetPreviews() : new List<PreviewEntry>();
             DrawPreview(previews);
 
             EditorGUILayout.Space();
@@ -164,7 +169,7 @@ namespace JustEnoughEditor
             if (e.keyCode != KeyCode.Return && e.keyCode != KeyCode.KeypadEnter) return;
             if (!BulkRenameOperations.TryValidate(pipeline, out _)) return;
 
-            var previews = ComputePreviews();
+            var previews = GetPreviews();
             if (previews.Any(p => !p.Skip && p.WillChange))
             {
                 e.Use();
@@ -322,13 +327,25 @@ namespace JustEnoughEditor
 
         private bool UsesNumberToken()
         {
+            // フラットな RenameStep は Type を切り替えても他フィールドの値が残るため、
+            // 現在の Type に関係するフィールドのみをチェックする(古い値の残留で誤検知させない)
             foreach (var step in pipeline.Steps)
             {
                 if (step == null || !step.Enabled) continue;
-                if ((step.ReplaceText ?? "").Contains("<num>")) return true;
-                if ((step.AddPrefix ?? "").Contains("<num>")) return true;
-                if ((step.AddSuffix ?? "").Contains("<num>")) return true;
-                if ((step.NamePattern ?? "").Contains("<num>")) return true;
+
+                switch (step.Type)
+                {
+                    case RenameStepType.FindReplace:
+                        if ((step.ReplaceText ?? "").Contains("<num>")) return true;
+                        break;
+                    case RenameStepType.AddPrefixSuffix:
+                        if ((step.AddPrefix ?? "").Contains("<num>")) return true;
+                        if ((step.AddSuffix ?? "").Contains("<num>")) return true;
+                        break;
+                    case RenameStepType.SetName:
+                        if ((step.NamePattern ?? "").Contains("<num>")) return true;
+                        break;
+                }
             }
             return false;
         }
@@ -342,6 +359,23 @@ namespace JustEnoughEditor
         }
 
         // ---- プレビュー ----
+
+        /// <summary>プレビュー再計算の抑制: キャッシュキー(パイプライン JSON + ターゲットの InstanceID 列)が
+        /// 前回から変化していなければキャッシュ済みの結果をそのまま返す。毎回の OnGUI や Enter キー押下のたびに
+        /// 正規表現マッチングを N ターゲット分やり直すのを避けるための措置。</summary>
+        private List<PreviewEntry> GetPreviews()
+        {
+            var key = JsonUtility.ToJson(pipeline) + "|" +
+                       string.Join(",", targets.Select(t => t != null ? t.GetInstanceID() : 0));
+
+            if (cachedPreviews == null || cachedPreviewKey != key)
+            {
+                cachedPreviews = ComputePreviews();
+                cachedPreviewKey = key;
+            }
+
+            return cachedPreviews;
+        }
 
         private List<PreviewEntry> ComputePreviews()
         {
@@ -497,12 +531,17 @@ namespace JustEnoughEditor
 
             AssetDatabase.Refresh();
 
+            // 名前が変わってもキャッシュキー(パイプライン JSON + InstanceID)は変化しないため、
+            // 明示的にキャッシュを無効化してから再計算させる
+            cachedPreviewKey = null;
+
+            // RefreshFromSelection は lastResultMessage をクリアするため、結果メッセージの代入より先に呼ぶ
+            if (!lockTargets) RefreshFromSelection();
+
             lastResultMessage = $"{successCount} renamed, {skipCount} skipped";
             if (errors.Count > 0)
                 lastResultMessage += "\n" + string.Join("\n", errors.Take(5));
             lastResultType = errors.Count > 0 ? MessageType.Warning : MessageType.Info;
-
-            if (!lockTargets) RefreshFromSelection();
         }
     }
 }

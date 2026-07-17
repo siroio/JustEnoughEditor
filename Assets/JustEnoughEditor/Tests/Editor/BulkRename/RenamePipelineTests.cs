@@ -378,6 +378,19 @@ namespace JustEnoughEditor.BulkRename.Tests
         }
 
         [Test]
+        public void Regex_NameTokenWithDollarIsNotTreatedAsGroupReference()
+        {
+            // <name> の展開値に $ が含まれていても、Regex.Replace のグループ参照として誤解釈されないことを確認する
+            var pipeline = PipelineWith(new RenameStep
+            {
+                Type = RenameStepType.FindReplace, UseRegex = true,
+                FindText = "(Enemy).*", ReplaceText = "<name>_ok"
+            });
+
+            Assert.AreEqual("Enemy$1_ok", BulkRenameOperations.GenerateNewName("Enemy$1", 0, pipeline));
+        }
+
+        [Test]
         public void TrimNormalize_AllFlagsCombined()
         {
             var pipeline = PipelineWith(new RenameStep

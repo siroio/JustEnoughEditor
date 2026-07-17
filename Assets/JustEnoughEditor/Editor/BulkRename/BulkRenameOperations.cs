@@ -149,17 +149,32 @@ namespace JustEnoughEditor.BulkRename
         {
             if (string.IsNullOrEmpty(step.FindText)) return name;
 
-            var replace = ExpandTokens(step.ReplaceText, originalName, index, pipeline);
-
             if (step.UseRegex)
             {
+                // 正規表現置換では ReplaceText がそのまま Regex.Replace の置換パターンとして解釈されるため、
+                // <name> トークンの値に $ が含まれているとグループ参照 ($1 等)として誤解釈される。
+                // トークン値側の $ のみ $$ にエスケープし、ユーザーが入力した ReplaceText 自体の $1 構文は維持する。
+                var regexReplace = ExpandTokensForRegexReplacement(step.ReplaceText, originalName, index, pipeline);
                 var options = step.CaseSensitive ? RegexOptions.None : RegexOptions.IgnoreCase;
-                // 破滅的バックトラッキングによるエディタのフリーズを防ぐため 1 秒でタイムアウトさせる
-                return Regex.Replace(name, step.FindText, replace, options, TimeSpan.FromSeconds(1));
+                // 名前は短いため、破滅的バックトラッキングによるエディタのフリーズを防ぐのに 100ms で十分
+                return Regex.Replace(name, step.FindText, regexReplace, options, TimeSpan.FromMilliseconds(100));
             }
 
+            var replace = ExpandTokens(step.ReplaceText, originalName, index, pipeline);
             if (step.CaseSensitive) return name.Replace(step.FindText, replace);
             return ReplaceCaseInsensitive(name, step.FindText, replace);
+        }
+
+        /// <summary>正規表現の置換文字列用にトークンを展開する。&lt;name&gt; の値に含まれる $ を $$ にエスケープし、
+        /// Regex.Replace がグループ参照として誤解釈しないようにする(ReplaceText 自体の $1 等は素通しする)。</summary>
+        private static string ExpandTokensForRegexReplacement(string text, string originalName, int index, RenamePipeline pipeline)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+
+            var escapedName = (originalName ?? "").Replace("$", "$$");
+            return text
+                .Replace("<name>", escapedName)
+                .Replace("<num>", FormatNumber(index, pipeline));
         }
 
         private static string ReplaceCaseInsensitive(string source, string find, string replace)
