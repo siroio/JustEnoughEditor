@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using JustEnoughEditor.BulkRename;
 using UnityEditor;
+using UnityEditor.ShortcutManagement;
 using UnityEditorInternal;
 using UnityEngine;
 using Object = UnityEngine.Object;
@@ -46,19 +47,55 @@ namespace JustEnoughEditor
         private GUIStyle skippedStyle;
         private GUIStyle unchangedStyle;
 
+        private const string PipelinePrefsKey = "JEE_BulkRenamePipeline";
+
         public static void ShowWindow()
         {
             var window = GetWindow<BulkRenameWindow>("Bulk Rename");
             window.RefreshFromSelection();
         }
 
+        /// <summary>ShortcutManager 経由のウィンドウオープン。Edit > Shortcuts の "JEE/Bulk Rename" でリバインド可能。</summary>
+        [Shortcut("JEE/Bulk Rename", KeyCode.R, ShortcutModifiers.Alt)]
+        private static void OpenViaShortcut()
+        {
+            ShowWindow();
+        }
+
         private void OnEnable()
         {
+            LoadPipeline();
+
             if (pipeline.Steps.Count == 0)
                 pipeline.Steps.Add(new RenameStep { Type = RenameStepType.FindReplace });
 
             BuildStepList();
             RefreshFromSelection();
+        }
+
+        private void OnDisable()
+        {
+            SavePipeline();
+        }
+
+        private void LoadPipeline()
+        {
+            var json = EditorPrefs.GetString(PipelinePrefsKey, "");
+            if (string.IsNullOrEmpty(json)) return;
+
+            try
+            {
+                pipeline = JsonUtility.FromJson<RenamePipeline>(json) ?? new RenamePipeline();
+            }
+            catch (Exception)
+            {
+                pipeline = new RenamePipeline();
+            }
+        }
+
+        private void SavePipeline()
+        {
+            EditorPrefs.SetString(PipelinePrefsKey, JsonUtility.ToJson(pipeline));
         }
 
         private void OnSelectionChange()
@@ -76,6 +113,7 @@ namespace JustEnoughEditor
 
         private void OnGUI()
         {
+            HandleKeyboard();
             EnsureStyles();
 
             DrawTargetBar();
@@ -107,6 +145,31 @@ namespace JustEnoughEditor
 
             if (!string.IsNullOrEmpty(lastResultMessage))
                 EditorGUILayout.HelpBox(lastResultMessage, lastResultType);
+        }
+
+        /// <summary>Enter で Apply、Esc でウィンドウを閉じる。テキスト編集中はどちらも無効。</summary>
+        private void HandleKeyboard()
+        {
+            var e = Event.current;
+            if (e.type != EventType.KeyDown || EditorGUIUtility.editingTextField) return;
+
+            if (e.keyCode == KeyCode.Escape)
+            {
+                e.Use();
+                Close();
+                GUIUtility.ExitGUI();
+                return;
+            }
+
+            if (e.keyCode != KeyCode.Return && e.keyCode != KeyCode.KeypadEnter) return;
+            if (!BulkRenameOperations.TryValidate(pipeline, out _)) return;
+
+            var previews = ComputePreviews();
+            if (previews.Any(p => !p.Skip && p.WillChange))
+            {
+                e.Use();
+                ApplyRename(previews);
+            }
         }
 
         private void EnsureStyles()
