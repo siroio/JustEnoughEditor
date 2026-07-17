@@ -252,5 +252,82 @@ namespace JustEnoughEditor.BulkRename.Tests
 
             Assert.AreEqual("Enemy_01", BulkRenameOperations.GenerateNewName("Enemy", 0, pipeline));
         }
+
+        [Test]
+        public void ChangeCase_Uppercase()
+        {
+            var pipeline = PipelineWith(new RenameStep
+            {
+                Type = RenameStepType.ChangeCase, CaseConversion = CaseConversion.Uppercase
+            });
+
+            Assert.AreEqual("ENEMY_01", BulkRenameOperations.GenerateNewName("enemy_01", 0, pipeline));
+        }
+
+        [Test]
+        public void ChangeCase_Lowercase()
+        {
+            var pipeline = PipelineWith(new RenameStep
+            {
+                Type = RenameStepType.ChangeCase, CaseConversion = CaseConversion.Lowercase
+            });
+
+            Assert.AreEqual("enemy_01", BulkRenameOperations.GenerateNewName("Enemy_01", 0, pipeline));
+        }
+
+        [Test]
+        public void ChangeCase_PascalCase()
+        {
+            var pipeline = PipelineWith(new RenameStep
+            {
+                Type = RenameStepType.ChangeCase, CaseConversion = CaseConversion.PascalCase
+            });
+
+            Assert.AreEqual("OldEnemyBoss", BulkRenameOperations.GenerateNewName("old_enemy boss", 0, pipeline));
+        }
+
+        [Test]
+        public void ChangeCase_CamelCase()
+        {
+            var pipeline = PipelineWith(new RenameStep
+            {
+                Type = RenameStepType.ChangeCase, CaseConversion = CaseConversion.CamelCase
+            });
+
+            Assert.AreEqual("oldEnemy", BulkRenameOperations.GenerateNewName("Old_Enemy", 0, pipeline));
+        }
+
+        [Test]
+        public void ChangeCase_SnakeCase_SplitsOnLowerToUpperBoundary()
+        {
+            var pipeline = PipelineWith(new RenameStep
+            {
+                Type = RenameStepType.ChangeCase, CaseConversion = CaseConversion.SnakeCase
+            });
+
+            Assert.AreEqual("old_enemy_boss", BulkRenameOperations.GenerateNewName("OldEnemyBoss", 0, pipeline));
+        }
+
+        [Test]
+        public void ChangeCase_KebabCase()
+        {
+            var pipeline = PipelineWith(new RenameStep
+            {
+                Type = RenameStepType.ChangeCase, CaseConversion = CaseConversion.KebabCase
+            });
+
+            Assert.AreEqual("old-enemy-boss", BulkRenameOperations.GenerateNewName("OldEnemy Boss", 0, pipeline));
+        }
+
+        [Test]
+        public void ChangeCase_PascalCase_HandlesMixedSeparators()
+        {
+            var pipeline = PipelineWith(new RenameStep
+            {
+                Type = RenameStepType.ChangeCase, CaseConversion = CaseConversion.PascalCase
+            });
+
+            Assert.AreEqual("MyCoolName", BulkRenameOperations.GenerateNewName("my-Cool_name", 0, pipeline));
+        }
     }
 }

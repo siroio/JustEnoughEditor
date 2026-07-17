@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 
 namespace JustEnoughEditor.BulkRename
@@ -208,6 +210,8 @@ namespace JustEnoughEditor.BulkRename
                     return RemoveCharacters(name, step.RemoveFromStart, step.RemoveFromEnd);
                 case RenameStepType.SetName:
                     return ExpandTokens(step.NamePattern, originalName, index, pipeline);
+                case RenameStepType.ChangeCase:
+                    return ConvertCase(name, step.CaseConversion);
                 default:
                     return name;
             }
@@ -261,6 +265,71 @@ namespace JustEnoughEditor.BulkRename
 
             error = null;
             return true;
+        }
+
+        /// <summary>名前を指定したケース形式に変換する。</summary>
+        public static string ConvertCase(string name, CaseConversion conversion)
+        {
+            switch (conversion)
+            {
+                case CaseConversion.Uppercase:
+                    return name.ToUpperInvariant();
+                case CaseConversion.Lowercase:
+                    return name.ToLowerInvariant();
+            }
+
+            var words = SplitWords(name);
+            switch (conversion)
+            {
+                case CaseConversion.PascalCase:
+                    return string.Concat(words.Select(Capitalize));
+                case CaseConversion.CamelCase:
+                    var pascal = string.Concat(words.Select(Capitalize));
+                    return pascal.Length > 0 ? char.ToLowerInvariant(pascal[0]) + pascal.Substring(1) : pascal;
+                case CaseConversion.SnakeCase:
+                    return string.Join("_", words.Select(w => w.ToLowerInvariant()));
+                case CaseConversion.KebabCase:
+                    return string.Join("-", words.Select(w => w.ToLowerInvariant()));
+                default:
+                    return name;
+            }
+        }
+
+        private static string Capitalize(string word)
+        {
+            if (word.Length == 0) return word;
+            return char.ToUpperInvariant(word[0]) + word.Substring(1).ToLowerInvariant();
+        }
+
+        /// <summary>空白・アンダースコア・ハイフン、および小文字→大文字の境界で単語に分割する。</summary>
+        private static string[] SplitWords(string name)
+        {
+            var words = new List<string>();
+            var current = new System.Text.StringBuilder();
+
+            foreach (var c in name)
+            {
+                if (c == ' ' || c == '_' || c == '-')
+                {
+                    if (current.Length > 0)
+                    {
+                        words.Add(current.ToString());
+                        current.Clear();
+                    }
+                    continue;
+                }
+
+                if (char.IsUpper(c) && current.Length > 0 && char.IsLower(current[current.Length - 1]))
+                {
+                    words.Add(current.ToString());
+                    current.Clear();
+                }
+
+                current.Append(c);
+            }
+
+            if (current.Length > 0) words.Add(current.ToString());
+            return words.ToArray();
         }
     }
 }
