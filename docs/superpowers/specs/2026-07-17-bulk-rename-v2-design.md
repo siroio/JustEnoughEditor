@@ -83,7 +83,7 @@ public class RenameStep
 }
 
 [Serializable]
-public class BulkRenameSettings
+public class RenamePipeline
 {
     public List<RenameStep> Steps = new List<RenameStep>();
 
@@ -93,6 +93,8 @@ public class BulkRenameSettings
 }
 ```
 
+新しい設定コンテナは `RenamePipeline` と命名する(旧 `BulkRenameSettings` と名前が衝突せず、実装期間中に新旧 API を共存させてコンパイルを常に通せるようにするため。旧 API は最終タスクで削除する)。
+
 単一クラス + 種別 enum のフラット構造は Unity の `JsonUtility` シリアライズ(EditorPrefs 永続化)と相性が良いため採用する。ポリモーフィズムより保守性を優先。
 
 ### 適用パイプライン
@@ -101,16 +103,16 @@ public class BulkRenameSettings
 public static class BulkRenameOperations
 {
     // Steps を順に適用した最終名を返す。Enabled=false のステップはスキップ。
-    public static string GenerateNewName(string currentName, int index, BulkRenameSettings settings);
+    public static string GenerateNewName(string currentName, int index, RenamePipeline pipeline);
 
     // 1 ステップ分の変換。originalName はトークン <name> の展開に使用。
-    public static string ApplyStep(string name, string originalName, int index, RenameStep step, BulkRenameSettings settings);
+    public static string ApplyStep(string name, string originalName, int index, RenameStep step, RenamePipeline pipeline);
 
     // 設定全体の検証。正規表現の不正パターン等を検出し、最初のエラーを返す。
-    public static bool TryValidate(BulkRenameSettings settings, out string error);
+    public static bool TryValidate(RenamePipeline pipeline, out string error);
 
     public static bool IsValidFileName(string name); // 現行維持
-    public static string FormatNumber(int index, BulkRenameSettings settings); // 現行維持
+    public static string FormatNumber(int index, RenamePipeline pipeline); // 新シグネチャ
 }
 ```
 
@@ -165,7 +167,7 @@ Regex 有効時の `ReplaceText` では .NET の `$1` 等のグループ参照�
 
 ### 永続化
 
-ウィンドウを閉じる際(`OnDisable`)に `BulkRenameSettings` を `JsonUtility` で JSON 化して EditorPrefs に保存し、`OnEnable` で復元する。キーは既存の JEEPrefs の命名規則に従う。
+ウィンドウを閉じる際(`OnDisable`)に `RenamePipeline` を `JsonUtility` で JSON 化して EditorPrefs に保存し、`OnEnable` で復元する。キーは既存の JEEPrefs の命名規則に従う。
 
 ### キーボード操作
 
