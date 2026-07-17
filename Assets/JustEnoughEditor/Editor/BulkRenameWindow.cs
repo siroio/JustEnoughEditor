@@ -1,32 +1,69 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using JustEnoughEditor.BulkRename;
 using UnityEditor;
+using UnityEditorInternal;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
 namespace JustEnoughEditor
 {
     /// <summary>
-    /// Hierarchy の GameObject と Project の Asset を対象に、複数モードで一括リネームを行うウィンドウ。
+    /// ステップチェーン方式の一括リネームウィンドウ。
+    /// 選択中の GameObject / Asset に対して、複数のリネームステップを上から順に適用する。
     /// </summary>
     public class BulkRenameWindow : EditorWindow
     {
-        private static readonly string[] ModeLabels =
+        private static readonly string[] StepTypeLabels =
         {
-            "Find/Replace", "Add Prefix/Suffix", "Sequential Number", "Replace All"
+            "Find & Replace", "Add Prefix/Suffix", "Remove Characters",
+            "Set Name", "Change Case", "Trim/Normalize"
         };
 
+        /// <summary>プレビュー 1 行分の計算結果。</summary>
+        private struct PreviewEntry
+        {
+            public Object Target;
+            public string OldName;      // 表示用 (アセットは拡張子付き)
+            public string NewName;      // 表示用 (アセットは拡張子付き)
+            public string NewBaseName;  // 適用用 (拡張子なし)
+            public bool Skip;
+            public string SkipReason;
+            public bool WillChange;
+        }
+
         private readonly List<Object> targets = new List<Object>();
-        private readonly BulkRenameSettings settings = new BulkRenameSettings();
-        private Vector2 scrollPosition;
+        private RenamePipeline pipeline = new RenamePipeline();
+        private ReorderableList stepList;
+        private Vector2 previewScroll;
+        private bool lockTargets;
         private string lastResultMessage = "";
+        private MessageType lastResultType = MessageType.Info;
+
+        private GUIStyle changedStyle;
+        private GUIStyle skippedStyle;
+        private GUIStyle unchangedStyle;
 
         public static void ShowWindow()
         {
             var window = GetWindow<BulkRenameWindow>("Bulk Rename");
             window.RefreshFromSelection();
+        }
+
+        private void OnEnable()
+        {
+            if (pipeline.Steps.Count == 0)
+                pipeline.Steps.Add(new RenameStep { Type = RenameStepType.FindReplace });
+
+            BuildStepList();
+            RefreshFromSelection();
+        }
+
+        private void OnSelectionChange()
+        {
+            if (!lockTargets) RefreshFromSelection();
         }
 
         private void RefreshFromSelection()
@@ -39,175 +76,370 @@ namespace JustEnoughEditor
 
         private void OnGUI()
         {
-            EditorGUILayout.LabelField($"Targets: {targets.Count}", EditorStyles.boldLabel);
-            if (GUILayout.Button("Refresh from Selection"))
-                RefreshFromSelection();
+            EnsureStyles();
 
-            EditorGUILayout.Space();
-            settings.Mode = (RenameMode)GUILayout.Toolbar((int)settings.Mode, ModeLabels);
+            DrawTargetBar();
             EditorGUILayout.Space();
 
-            DrawModeFields();
+            stepList.DoLayoutList();
+
+            if (UsesNumberToken())
+                DrawNumberingSection();
+
+            var validationOk = BulkRenameOperations.TryValidate(pipeline, out var validationError);
+            if (!validationOk)
+                EditorGUILayout.HelpBox(validationError, MessageType.Error);
 
             EditorGUILayout.Space();
-            EditorGUILayout.LabelField("Preview", EditorStyles.boldLabel);
-            DrawPreview();
+            var previews = validationOk ? ComputePreviews() : new List<PreviewEntry>();
+            DrawPreview(previews);
 
             EditorGUILayout.Space();
-            EditorGUILayout.HelpBox("Renaming assets cannot be undone.", MessageType.Warning);
+            if (targets.Any(t => t != null && IsAsset(t)))
+                EditorGUILayout.HelpBox("Renaming assets cannot be undone.", MessageType.Warning);
 
-            using (new EditorGUI.DisabledScope(targets.Count == 0))
+            var changeCount = previews.Count(p => !p.Skip && p.WillChange);
+            using (new EditorGUI.DisabledScope(!validationOk || changeCount == 0))
             {
-                if (GUILayout.Button("Apply"))
-                    ApplyRename();
+                if (GUILayout.Button($"Apply ({changeCount})", GUILayout.Height(28f)))
+                    ApplyRename(previews);
             }
 
             if (!string.IsNullOrEmpty(lastResultMessage))
-                EditorGUILayout.LabelField(lastResultMessage);
+                EditorGUILayout.HelpBox(lastResultMessage, lastResultType);
         }
 
-        private void DrawModeFields()
+        private void EnsureStyles()
         {
-            switch (settings.Mode)
+            if (changedStyle != null) return;
+
+            changedStyle = new GUIStyle(EditorStyles.label);
+            changedStyle.normal.textColor = new Color(0.4f, 0.8f, 0.4f);
+            skippedStyle = new GUIStyle(EditorStyles.label);
+            skippedStyle.normal.textColor = new Color(0.95f, 0.45f, 0.45f);
+            unchangedStyle = new GUIStyle(EditorStyles.label);
+            unchangedStyle.normal.textColor = Color.gray;
+        }
+
+        // ---- ターゲットバー ----
+
+        private void DrawTargetBar()
+        {
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField($"Targets: {targets.Count}", EditorStyles.boldLabel);
+            GUILayout.FlexibleSpace();
+
+            var newLock = GUILayout.Toggle(lockTargets, "Lock Targets", "Button", GUILayout.Width(100f));
+            if (newLock != lockTargets)
             {
-                case RenameMode.FindReplace:
-                    settings.FindText = EditorGUILayout.TextField("Find", settings.FindText);
-                    settings.ReplaceText = EditorGUILayout.TextField("Replace", settings.ReplaceText);
-                    settings.CaseSensitive = EditorGUILayout.Toggle("Case Sensitive", settings.CaseSensitive);
-                    break;
-                case RenameMode.AddPrefixSuffix:
-                    settings.AddPrefix = EditorGUILayout.TextField("Add Prefix", settings.AddPrefix);
-                    settings.AddSuffix = EditorGUILayout.TextField("Add Suffix", settings.AddSuffix);
-                    settings.RemoveFromStart = EditorGUILayout.IntField("Remove From Start", settings.RemoveFromStart);
-                    settings.RemoveFromEnd = EditorGUILayout.IntField("Remove From End", settings.RemoveFromEnd);
-                    break;
-                case RenameMode.SequentialNumber:
-                    DrawNumberFields();
-                    break;
-                case RenameMode.ReplaceAll:
-                    settings.NewBaseName = EditorGUILayout.TextField("New Base Name", settings.NewBaseName);
-                    settings.AppendNumber = EditorGUILayout.Toggle("Append Number", settings.AppendNumber);
-                    if (settings.AppendNumber)
-                        DrawNumberFields();
-                    break;
+                lockTargets = newLock;
+                if (!lockTargets) RefreshFromSelection();
+            }
+
+            EditorGUILayout.EndHorizontal();
+        }
+
+        // ---- ステップリスト ----
+
+        private void BuildStepList()
+        {
+            stepList = new ReorderableList(pipeline.Steps, typeof(RenameStep), true, true, true, true)
+            {
+                drawHeaderCallback = rect => EditorGUI.LabelField(rect, "Rename Steps (applied top to bottom)"),
+                drawElementCallback = DrawStepElement,
+                elementHeightCallback = GetStepHeight,
+                onAddDropdownCallback = ShowAddStepMenu
+            };
+        }
+
+        private static float Rows(int count)
+        {
+            return count * (EditorGUIUtility.singleLineHeight + 2f) + 6f;
+        }
+
+        private float GetStepHeight(int index)
+        {
+            switch (pipeline.Steps[index].Type)
+            {
+                case RenameStepType.FindReplace: return Rows(4);
+                case RenameStepType.AddPrefixSuffix: return Rows(3);
+                case RenameStepType.RemoveCharacters: return Rows(3);
+                case RenameStepType.SetName: return Rows(2);
+                case RenameStepType.ChangeCase: return Rows(2);
+                case RenameStepType.TrimNormalize: return Rows(4);
+                default: return Rows(1);
             }
         }
 
-        private void DrawNumberFields()
+        private void ShowAddStepMenu(Rect buttonRect, ReorderableList list)
         {
-            settings.StartNumber = Mathf.Max(0, EditorGUILayout.IntField("Start Number", settings.StartNumber));
-            settings.Digits = EditorGUILayout.IntField("Digits", settings.Digits);
-            settings.NumberPosition = (NumberPosition)EditorGUILayout.EnumPopup("Position", settings.NumberPosition);
-            settings.NumberSeparator = EditorGUILayout.TextField("Separator", settings.NumberSeparator);
+            var menu = new GenericMenu();
+            for (var i = 0; i < StepTypeLabels.Length; i++)
+            {
+                var type = (RenameStepType)i;
+                menu.AddItem(new GUIContent(StepTypeLabels[i]), false, () =>
+                {
+                    pipeline.Steps.Add(new RenameStep { Type = type });
+                    Repaint();
+                });
+            }
+            menu.DropDown(buttonRect);
         }
 
-        private void DrawPreview()
+        private static Rect NextRow(Rect row)
         {
-            scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition, GUILayout.Height(200));
+            return new Rect(row.x, row.y + EditorGUIUtility.singleLineHeight + 2f, row.width, EditorGUIUtility.singleLineHeight);
+        }
+
+        private void DrawStepElement(Rect rect, int index, bool isActive, bool isFocused)
+        {
+            var step = pipeline.Steps[index];
+            var line = EditorGUIUtility.singleLineHeight;
+            var row = new Rect(rect.x, rect.y + 3f, rect.width, line);
+
+            var toggleRect = new Rect(row.x, row.y, 18f, line);
+            step.Enabled = EditorGUI.Toggle(toggleRect, step.Enabled);
+
+            var typeRect = new Rect(row.x + 22f, row.y, row.width - 22f, line);
+            step.Type = (RenameStepType)EditorGUI.Popup(typeRect, (int)step.Type, StepTypeLabels);
+
+            using (new EditorGUI.DisabledScope(!step.Enabled))
+            {
+                switch (step.Type)
+                {
+                    case RenameStepType.FindReplace:
+                        row = NextRow(row);
+                        step.FindText = EditorGUI.TextField(row, "Find", step.FindText);
+                        row = NextRow(row);
+                        step.ReplaceText = EditorGUI.TextField(row, "Replace", step.ReplaceText);
+                        row = NextRow(row);
+                        var half = new Rect(row.x, row.y, row.width / 2f, line);
+                        step.UseRegex = EditorGUI.ToggleLeft(half, "Regex", step.UseRegex);
+                        half.x += row.width / 2f;
+                        step.CaseSensitive = EditorGUI.ToggleLeft(half, "Case Sensitive", step.CaseSensitive);
+                        break;
+
+                    case RenameStepType.AddPrefixSuffix:
+                        row = NextRow(row);
+                        step.AddPrefix = EditorGUI.TextField(row, "Prefix", step.AddPrefix);
+                        row = NextRow(row);
+                        step.AddSuffix = EditorGUI.TextField(row, "Suffix", step.AddSuffix);
+                        break;
+
+                    case RenameStepType.RemoveCharacters:
+                        row = NextRow(row);
+                        step.RemoveFromStart = Mathf.Max(0, EditorGUI.IntField(row, "From Start", step.RemoveFromStart));
+                        row = NextRow(row);
+                        step.RemoveFromEnd = Mathf.Max(0, EditorGUI.IntField(row, "From End", step.RemoveFromEnd));
+                        break;
+
+                    case RenameStepType.SetName:
+                        row = NextRow(row);
+                        step.NamePattern = EditorGUI.TextField(row, "Name Pattern", step.NamePattern);
+                        break;
+
+                    case RenameStepType.ChangeCase:
+                        row = NextRow(row);
+                        step.CaseConversion = (CaseConversion)EditorGUI.EnumPopup(row, "Convert To", step.CaseConversion);
+                        break;
+
+                    case RenameStepType.TrimNormalize:
+                        row = NextRow(row);
+                        step.TrimWhitespace = EditorGUI.ToggleLeft(row, "Trim Whitespace", step.TrimWhitespace);
+                        row = NextRow(row);
+                        step.CollapseWhitespace = EditorGUI.ToggleLeft(row, "Collapse Whitespace", step.CollapseWhitespace);
+                        row = NextRow(row);
+                        step.RemoveDuplicateSuffix = EditorGUI.ToggleLeft(row, "Remove \" (1)\" Suffix", step.RemoveDuplicateSuffix);
+                        break;
+                }
+            }
+        }
+
+        // ---- Numbering ----
+
+        private bool UsesNumberToken()
+        {
+            foreach (var step in pipeline.Steps)
+            {
+                if (step == null || !step.Enabled) continue;
+                if ((step.ReplaceText ?? "").Contains("<num>")) return true;
+                if ((step.AddPrefix ?? "").Contains("<num>")) return true;
+                if ((step.AddSuffix ?? "").Contains("<num>")) return true;
+                if ((step.NamePattern ?? "").Contains("<num>")) return true;
+            }
+            return false;
+        }
+
+        private void DrawNumberingSection()
+        {
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("Numbering (<num>)", EditorStyles.boldLabel);
+            pipeline.StartNumber = Mathf.Max(0, EditorGUILayout.IntField("Start Number", pipeline.StartNumber));
+            pipeline.Digits = Mathf.Clamp(EditorGUILayout.IntField("Digits", pipeline.Digits), 1, 10);
+        }
+
+        // ---- プレビュー ----
+
+        private List<PreviewEntry> ComputePreviews()
+        {
+            var entries = new List<PreviewEntry>(targets.Count);
 
             for (var i = 0; i < targets.Count; i++)
             {
                 var obj = targets[i];
                 if (obj == null) continue;
 
-                var (newName, skip, skipReason) = ComputeNewName(obj, i);
+                var entry = new PreviewEntry { Target = obj };
+                try
+                {
+                    if (IsAsset(obj)) FillAssetPreview(ref entry, obj, i);
+                    else FillGameObjectPreview(ref entry, obj, i);
+                }
+                catch (Exception e)
+                {
+                    // 正規表現のタイムアウト等。行単位でスキップ扱いにする
+                    entry.OldName = obj.name;
+                    entry.NewName = obj.name;
+                    entry.Skip = true;
+                    entry.SkipReason = e.Message;
+                }
 
+                entries.Add(entry);
+            }
+
+            return entries;
+        }
+
+        private void FillAssetPreview(ref PreviewEntry entry, Object obj, int index)
+        {
+            var path = AssetDatabase.GetAssetPath(obj);
+            var extension = Path.GetExtension(path);
+            var baseName = Path.GetFileNameWithoutExtension(path);
+            var newBase = BulkRenameOperations.GenerateNewName(baseName, index, pipeline);
+
+            entry.OldName = baseName + extension;
+            entry.NewName = newBase + extension;
+            entry.NewBaseName = newBase;
+            entry.WillChange = !string.Equals(newBase, baseName, StringComparison.Ordinal);
+
+            if (string.IsNullOrEmpty(newBase))
+            {
+                entry.Skip = true;
+                entry.SkipReason = "Name is empty";
+                return;
+            }
+
+            if (!BulkRenameOperations.IsValidFileName(newBase))
+            {
+                entry.Skip = true;
+                entry.SkipReason = "Contains invalid characters";
+                return;
+            }
+
+            var directory = Path.GetDirectoryName(path) ?? "";
+            var newPath = (directory.Length > 0 ? directory + "/" : "") + newBase + extension;
+            newPath = newPath.Replace('\\', '/');
+
+            if (!string.Equals(newPath, path, StringComparison.OrdinalIgnoreCase) && File.Exists(newPath))
+            {
+                entry.Skip = true;
+                entry.SkipReason = "A file with this name already exists";
+            }
+        }
+
+        private void FillGameObjectPreview(ref PreviewEntry entry, Object obj, int index)
+        {
+            var newName = BulkRenameOperations.GenerateNewName(obj.name, index, pipeline);
+
+            entry.OldName = obj.name;
+            entry.NewName = newName;
+            entry.NewBaseName = newName;
+            entry.WillChange = !string.Equals(newName, obj.name, StringComparison.Ordinal);
+
+            if (string.IsNullOrEmpty(newName))
+            {
+                entry.Skip = true;
+                entry.SkipReason = "Name is empty";
+            }
+        }
+
+        private void DrawPreview(List<PreviewEntry> previews)
+        {
+            var changeCount = previews.Count(p => !p.Skip && p.WillChange);
+            var skipCount = previews.Count(p => p.Skip);
+            EditorGUILayout.LabelField($"Preview — {changeCount} will change, {skipCount} skipped", EditorStyles.boldLabel);
+
+            previewScroll = EditorGUILayout.BeginScrollView(previewScroll, GUILayout.MinHeight(120f), GUILayout.ExpandHeight(true));
+
+            var halfWidth = Mathf.Max(120f, (position.width - 60f) / 2f);
+            foreach (var p in previews)
+            {
                 EditorGUILayout.BeginHorizontal();
-                if (skip)
-                    EditorGUILayout.LabelField(new GUIContent("!", skipReason), GUILayout.Width(20));
-                else
-                    GUILayout.Space(20);
+                EditorGUILayout.LabelField(new GUIContent(p.OldName, p.OldName), GUILayout.Width(halfWidth));
+                EditorGUILayout.LabelField("→", GUILayout.Width(20f));
 
-                EditorGUILayout.LabelField(obj.name, GUILayout.Width(150));
-                EditorGUILayout.LabelField("->", GUILayout.Width(20));
-                EditorGUILayout.LabelField(skip ? "(skipped)" : newName);
+                if (p.Skip)
+                    EditorGUILayout.LabelField(new GUIContent($"(skip: {p.SkipReason})", p.SkipReason), skippedStyle);
+                else if (p.WillChange)
+                    EditorGUILayout.LabelField(new GUIContent(p.NewName, p.NewName), changedStyle);
+                else
+                    EditorGUILayout.LabelField(new GUIContent(p.NewName, p.NewName), unchangedStyle);
+
                 EditorGUILayout.EndHorizontal();
             }
 
             EditorGUILayout.EndScrollView();
         }
 
+        // ---- 適用 ----
+
         private static bool IsAsset(Object obj)
         {
             return !string.IsNullOrEmpty(AssetDatabase.GetAssetPath(obj));
         }
 
-        private (string newName, bool skip, string skipReason) ComputeNewName(Object obj, int index)
-        {
-            if (IsAsset(obj))
-            {
-                var path = AssetDatabase.GetAssetPath(obj);
-                var extension = Path.GetExtension(path);
-                var baseName = Path.GetFileNameWithoutExtension(path);
-                var newBase = BulkRenameOperations.GenerateNewName(baseName, index, settings);
-                var newFullName = newBase + extension;
-
-                if (string.IsNullOrEmpty(newBase))
-                    return (newFullName, true, "Name is empty");
-                if (!BulkRenameOperations.IsValidFileName(newBase))
-                    return (newFullName, true, "Contains invalid characters");
-
-                var directory = Path.GetDirectoryName(path) ?? "";
-                var newPath = (directory.Length > 0 ? directory + "/" : "") + newFullName;
-                newPath = newPath.Replace('\\', '/');
-
-                if (!string.Equals(newPath, path, StringComparison.OrdinalIgnoreCase) && File.Exists(newPath))
-                    return (newFullName, true, "A file with this name already exists");
-
-                return (newFullName, false, null);
-            }
-
-            var newName = BulkRenameOperations.GenerateNewName(obj.name, index, settings);
-            if (string.IsNullOrEmpty(newName))
-                return (newName, true, "Name is empty");
-
-            return (newName, false, null);
-        }
-
-        private void ApplyRename()
+        private void ApplyRename(List<PreviewEntry> previews)
         {
             var successCount = 0;
             var skipCount = 0;
+            var errors = new List<string>();
 
-            for (var i = 0; i < targets.Count; i++)
+            foreach (var entry in previews)
             {
-                var obj = targets[i];
-                if (obj == null)
+                if (entry.Skip || !entry.WillChange)
                 {
-                    skipCount++;
+                    if (entry.Skip) skipCount++;
                     continue;
                 }
 
-                var (newName, skip, _) = ComputeNewName(obj, i);
-                if (skip)
+                if (IsAsset(entry.Target))
                 {
-                    skipCount++;
-                    continue;
-                }
-
-                if (IsAsset(obj))
-                {
-                    var path = AssetDatabase.GetAssetPath(obj);
-                    var newBaseName = Path.GetFileNameWithoutExtension(newName);
-                    var error = AssetDatabase.RenameAsset(path, newBaseName);
+                    var path = AssetDatabase.GetAssetPath(entry.Target);
+                    var error = AssetDatabase.RenameAsset(path, entry.NewBaseName);
                     if (!string.IsNullOrEmpty(error))
                     {
                         skipCount++;
+                        errors.Add($"{entry.OldName}: {error}");
                         continue;
                     }
                 }
                 else
                 {
-                    Undo.RecordObject(obj, "Bulk Rename");
-                    obj.name = newName;
+                    Undo.RecordObject(entry.Target, "Bulk Rename");
+                    entry.Target.name = entry.NewBaseName;
                 }
 
                 successCount++;
             }
 
             AssetDatabase.Refresh();
+
             lastResultMessage = $"{successCount} renamed, {skipCount} skipped";
-            RefreshFromSelection();
+            if (errors.Count > 0)
+                lastResultMessage += "\n" + string.Join("\n", errors.Take(5));
+            lastResultType = errors.Count > 0 ? MessageType.Warning : MessageType.Info;
+
+            if (!lockTargets) RefreshFromSelection();
         }
     }
 }
