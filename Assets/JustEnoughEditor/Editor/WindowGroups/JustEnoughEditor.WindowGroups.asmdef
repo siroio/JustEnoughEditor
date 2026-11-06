@@ -1,0 +1,7 @@
+{
+    "name": "JustEnoughEditor.WindowGroups",
+    "rootNamespace": "JustEnoughEditor",
+    "references": [],
+    "includePlatforms": ["Editor"],
+    "autoReferenced": true
+}
