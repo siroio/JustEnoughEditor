@@ -13,6 +13,7 @@ Hierarchy と Project ウィンドウを見やすくし、よく使うアセッ�
 - 任意の GameObject にカスタムアイコンを付ける
 - Hierarchy に見出し用の区切り行を作る
 - よく使うフォルダやアセットを `Favorite Assets` に登録する
+- `Scene Selector` でシーンを検索し、お気に入りやビルド設定を管理する
 - Unity のウィンドウタブを名前・色付きのグループにまとめて折りたたむ
 - 登録したお気に入りを Project ウィンドウ上で色付き表示する
 - Missing Script が残っている GameObject を探して削除する
@@ -22,11 +23,12 @@ Hierarchy と Project ウィンドウを見やすくし、よく使うアセッ�
 
 Unity を開くと、上部メニューに `JEE` が追加されます。
 
-主に使う入口は次の3つです。
+主に使う入口は次の4つです。
 
 | やりたいこと | メニュー |
 | --- | --- |
 | お気に入りアセットを管理する | `JEE > Favorite Assets` |
+| シーンを検索して開く | `JEE > Scene Selector` |
 | 全体設定を変更する | `JEE > Settings` |
 | Missing Script を探す | `JEE > Missing Script Finder` |
 
@@ -110,6 +112,18 @@ JEEEditorStyles.EndCard();
 | `Shared_ScriptableObject` | プロジェクト内の他の人と共有したい一覧に使う |
 
 共有用を選ぶと、プロジェクト内に共有データが保存されます。
+
+## Scene Selector の使い方
+
+`JEE > Scene Selector` を開くと、お気に入り・ビルド設定・全シーンの一覧を表示します。
+
+- 検索欄でシーン名やパスを絞り込み、`Name`・`Path`・`Recent`・`Build` で並べ替えます。
+- シーンを選択して `Enter` で開き、`Shift+Enter` で現在のシーンに追加します。未保存の変更があれば保存確認が表示されます。
+- シーンをドラッグ＆ドロップしてお気に入りに追加し、選択して `F` で登録を切り替えます。
+- 選択して `B` でビルド設定への登録、`P` で PlayMode の開始シーンを設定できます。
+- 右クリックで各操作を選べます。`Help` でショートカットを確認できます。
+
+お気に入りと表示設定は個人用の EditorPrefs に保存されます。
 
 ## Window Groups の使い方
 
