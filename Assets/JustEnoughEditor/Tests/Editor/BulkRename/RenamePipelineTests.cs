@@ -11,6 +11,35 @@ namespace JustEnoughEditor.BulkRename.Tests
         }
 
         [Test]
+        public void FindDuplicateIndexes_ReturnsEveryCaseInsensitiveCollision()
+        {
+            var duplicates = BulkRenameOperations.FindDuplicateIndexes(new[]
+            {
+                "Assets/Props/Wall.prefab",
+                "Assets/Props/wall.prefab",
+                "Assets/Props/Door.prefab",
+                "Assets/Props/WALL.prefab"
+            });
+
+            CollectionAssert.AreEquivalent(new[] { 0, 1, 3 }, duplicates);
+        }
+
+        [Test]
+        public void FindDuplicateIndexes_IgnoresNullCandidates()
+        {
+            var duplicates = BulkRenameOperations.FindDuplicateIndexes(new string[] { null, null, "Door.prefab" });
+
+            CollectionAssert.IsEmpty(duplicates);
+        }
+
+        [Test]
+        public void IsValidFileName_RejectsWindowsReservedDeviceNames()
+        {
+            Assert.IsFalse(BulkRenameOperations.IsValidFileName("CON"));
+            Assert.IsFalse(BulkRenameOperations.IsValidFileName("lpt1.backup"));
+        }
+
+        [Test]
         public void GenerateNewName_EmptyPipelineReturnsNameUnchanged()
         {
             Assert.AreEqual("Enemy", BulkRenameOperations.GenerateNewName("Enemy", 0, new RenamePipeline()));

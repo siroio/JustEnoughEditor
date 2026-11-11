@@ -30,16 +30,22 @@ namespace JustEnoughEditor
             public string OldName;      // 表示用 (アセットは拡張子付き)
             public string NewName;      // 表示用 (アセットは拡張子付き)
             public string NewBaseName;  // 適用用 (拡張子なし)
+            public string DestinationKey;
+            public string SequenceNumber;
             public bool Skip;
             public string SkipReason;
             public bool WillChange;
         }
 
         private readonly List<Object> targets = new List<Object>();
+        private readonly HashSet<int> excludedTargetIds = new HashSet<int>();
         private RenamePipeline pipeline = new RenamePipeline();
         private ReorderableList stepList;
+        private RenameStep expandedStep;
         private Vector2 previewScroll;
         private bool lockTargets;
+        private bool showTargets;
+        private bool showChangesOnly;
         private string lastResultMessage = "";
         private MessageType lastResultType = MessageType.Info;
 
@@ -74,6 +80,7 @@ namespace JustEnoughEditor
             if (pipeline.Steps.Count == 0)
                 pipeline.Steps.Add(new RenameStep { Type = RenameStepType.FindReplace });
 
+            expandedStep = pipeline.Steps[0];
             BuildStepList();
             RefreshFromSelection();
         }
@@ -112,6 +119,8 @@ namespace JustEnoughEditor
         {
             targets.Clear();
             targets.AddRange(Selection.objects);
+            excludedTargetIds.Clear();
+            cachedPreviewKey = null;
             lastResultMessage = "";
             Repaint();
         }
@@ -125,6 +134,7 @@ namespace JustEnoughEditor
             EditorGUILayout.Space();
 
             stepList.DoLayoutList();
+            DrawRuleActions();
 
             if (UsesNumberToken())
                 DrawNumberingSection();
@@ -138,14 +148,15 @@ namespace JustEnoughEditor
             DrawPreview(previews);
 
             EditorGUILayout.Space();
-            if (targets.Any(t => t != null && JEEAssetUtility.IsAsset(t)))
-                EditorGUILayout.HelpBox("Renaming assets cannot be undone.", MessageType.Warning);
+            var assetChangeCount = previews.Count(p => IsIncluded(p) && !p.Skip && p.WillChange && JEEAssetUtility.IsAsset(p.Target));
+            if (assetChangeCount > 0)
+                EditorGUILayout.HelpBox($"{assetChangeCount} asset rename(s) cannot be undone.", MessageType.Warning);
 
-            var changeCount = previews.Count(p => !p.Skip && p.WillChange);
+            var changeCount = previews.Count(p => IsIncluded(p) && !p.Skip && p.WillChange);
             using (new EditorGUI.DisabledScope(!validationOk || changeCount == 0))
             {
-                if (GUILayout.Button($"Apply ({changeCount})", GUILayout.Height(28f)))
-                    ApplyRename(previews);
+                if (GUILayout.Button($"Rename {changeCount} Item{(changeCount == 1 ? "" : "s")}", GUILayout.Height(30f)))
+                    ConfirmAndApply(previews);
             }
 
             if (!string.IsNullOrEmpty(lastResultMessage))
@@ -170,10 +181,10 @@ namespace JustEnoughEditor
             if (!BulkRenameOperations.TryValidate(pipeline, out _)) return;
 
             var previews = GetPreviews();
-            if (previews.Any(p => !p.Skip && p.WillChange))
+            if (previews.Any(p => IsIncluded(p) && !p.Skip && p.WillChange))
             {
                 e.Use();
-                ApplyRename(previews);
+                ConfirmAndApply(previews);
             }
         }
 
@@ -194,29 +205,108 @@ namespace JustEnoughEditor
         private void DrawTargetBar()
         {
             EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField($"Targets: {targets.Count}", EditorStyles.boldLabel);
+            showTargets = EditorGUILayout.Foldout(showTargets, $"Targets ({targets.Count})", true, EditorStyles.foldoutHeader);
             GUILayout.FlexibleSpace();
 
-            var newLock = GUILayout.Toggle(lockTargets, "Lock Targets", "Button", GUILayout.Width(100f));
-            if (newLock != lockTargets)
+            var followSelection = !lockTargets;
+            var newFollowSelection = GUILayout.Toggle(followSelection, "Follow Selection", "Button", GUILayout.Width(110f));
+            if (newFollowSelection != followSelection)
             {
-                lockTargets = newLock;
-                if (!lockTargets) RefreshFromSelection();
+                lockTargets = !newFollowSelection;
+                if (newFollowSelection) RefreshFromSelection();
+            }
+
+            using (new EditorGUI.DisabledScope(targets.Count == 0))
+            {
+                if (GUILayout.Button("Clear", GUILayout.Width(48f)))
+                {
+                    targets.Clear();
+                    excludedTargetIds.Clear();
+                    cachedPreviewKey = null;
+                    lockTargets = true;
+                }
             }
 
             EditorGUILayout.EndHorizontal();
+
+            if (showTargets)
+                DrawTargetList();
+
+            DrawTargetDropArea();
+        }
+
+        private void DrawTargetList()
+        {
+            for (var i = 0; i < targets.Count; i++)
+            {
+                var target = targets[i];
+                EditorGUILayout.BeginHorizontal();
+                using (new EditorGUI.DisabledScope(true))
+                    EditorGUILayout.ObjectField(target, typeof(Object), true);
+
+                if (GUILayout.Button("×", GUILayout.Width(24f)))
+                {
+                    if (target != null) excludedTargetIds.Remove(target.GetInstanceID());
+                    targets.RemoveAt(i);
+                    cachedPreviewKey = null;
+                    lockTargets = true;
+                    i--;
+                }
+                EditorGUILayout.EndHorizontal();
+            }
+        }
+
+        private void DrawTargetDropArea()
+        {
+            var rect = GUILayoutUtility.GetRect(0f, 28f, GUILayout.ExpandWidth(true));
+            GUI.Box(rect, targets.Count == 0 ? "Drop GameObjects or assets here" : "Drop to add more targets", EditorStyles.helpBox);
+
+            var e = Event.current;
+            if (!rect.Contains(e.mousePosition) || (e.type != EventType.DragUpdated && e.type != EventType.DragPerform))
+                return;
+
+            var validTargets = DragAndDrop.objectReferences.Where(CanRenameTarget).ToArray();
+            DragAndDrop.visualMode = validTargets.Length > 0 ? DragAndDropVisualMode.Copy : DragAndDropVisualMode.Rejected;
+            if (e.type != EventType.DragPerform || validTargets.Length == 0)
+            {
+                e.Use();
+                return;
+            }
+
+            DragAndDrop.AcceptDrag();
+            foreach (var target in validTargets)
+            {
+                if (targets.All(existing => existing == null || existing.GetInstanceID() != target.GetInstanceID()))
+                    targets.Add(target);
+            }
+
+            lockTargets = true;
+            cachedPreviewKey = null;
+            e.Use();
+        }
+
+        private static bool CanRenameTarget(Object target)
+        {
+            return target is GameObject || (target != null && JEEAssetUtility.IsAsset(target));
         }
 
         // ---- ステップリスト ----
 
         private void BuildStepList()
         {
-            stepList = new ReorderableList(pipeline.Steps, typeof(RenameStep), true, true, true, true)
+            stepList = new ReorderableList(pipeline.Steps, typeof(RenameStep), true, true, false, true)
             {
-                drawHeaderCallback = rect => EditorGUI.LabelField(rect, "Rename Steps (applied top to bottom)"),
+                drawHeaderCallback = rect => EditorGUI.LabelField(rect, "Rename Rules — applied top to bottom"),
                 drawElementCallback = DrawStepElement,
                 elementHeightCallback = GetStepHeight,
-                onAddDropdownCallback = ShowAddStepMenu
+                onRemoveCallback = list =>
+                {
+                    var removed = list.index >= 0 && list.index < pipeline.Steps.Count
+                        ? pipeline.Steps[list.index]
+                        : null;
+                    ReorderableList.defaultBehaviours.DoRemoveButton(list);
+                    if (ReferenceEquals(expandedStep, removed)) expandedStep = null;
+                }
             };
         }
 
@@ -227,6 +317,8 @@ namespace JustEnoughEditor
 
         private float GetStepHeight(int index)
         {
+            if (!ReferenceEquals(pipeline.Steps[index], expandedStep)) return Rows(1);
+
             switch (pipeline.Steps[index].Type)
             {
                 case RenameStepType.FindReplace: return Rows(4);
@@ -247,7 +339,9 @@ namespace JustEnoughEditor
                 var type = (RenameStepType)i;
                 menu.AddItem(new GUIContent(StepTypeLabels[i]), false, () =>
                 {
-                    pipeline.Steps.Add(new RenameStep { Type = type });
+                    var step = new RenameStep { Type = type };
+                    pipeline.Steps.Add(step);
+                    expandedStep = step;
                     Repaint();
                 });
             }
@@ -265,11 +359,18 @@ namespace JustEnoughEditor
             var line = EditorGUIUtility.singleLineHeight;
             var row = new Rect(rect.x, rect.y + 3f, rect.width, line);
 
-            var toggleRect = new Rect(row.x, row.y, 18f, line);
+            var foldoutRect = new Rect(row.x, row.y, 16f, line);
+            var expanded = ReferenceEquals(step, expandedStep);
+            var newExpanded = EditorGUI.Foldout(foldoutRect, expanded, GUIContent.none);
+            if (newExpanded != expanded) expandedStep = newExpanded ? step : null;
+
+            var toggleRect = new Rect(row.x + 18f, row.y, 18f, line);
             step.Enabled = EditorGUI.Toggle(toggleRect, step.Enabled);
 
-            var typeRect = new Rect(row.x + 22f, row.y, row.width - 22f, line);
+            var typeRect = new Rect(row.x + 40f, row.y, row.width - 40f, line);
             step.Type = (RenameStepType)EditorGUI.Popup(typeRect, (int)step.Type, StepTypeLabels);
+
+            if (!ReferenceEquals(step, expandedStep)) return;
 
             using (new EditorGUI.DisabledScope(!step.Enabled))
             {
@@ -323,6 +424,30 @@ namespace JustEnoughEditor
             }
         }
 
+        private void DrawRuleActions()
+        {
+            EditorGUILayout.BeginHorizontal();
+
+            if (EditorGUILayout.DropdownButton(new GUIContent("+ Add Rule"), FocusType.Passive))
+                ShowAddStepMenu(GUILayoutUtility.GetLastRect(), stepList);
+
+            using (new EditorGUI.DisabledScope(UsesNumberToken()))
+            {
+                if (GUILayout.Button("+ Numbering"))
+                {
+                    var step = new RenameStep
+                    {
+                        Type = RenameStepType.AddPrefixSuffix,
+                        AddSuffix = "_<num>"
+                    };
+                    pipeline.Steps.Add(step);
+                    expandedStep = step;
+                }
+            }
+
+            EditorGUILayout.EndHorizontal();
+        }
+
         // ---- Numbering ----
 
         private bool UsesNumberToken()
@@ -366,7 +491,8 @@ namespace JustEnoughEditor
         private List<PreviewEntry> GetPreviews()
         {
             var key = JsonUtility.ToJson(pipeline) + "|" +
-                       string.Join(",", targets.Select(t => t != null ? t.GetInstanceID() : 0));
+                       string.Join(",", targets.Select(t => t != null ? t.GetInstanceID() : 0)) + "|" +
+                       string.Join(",", excludedTargetIds.OrderBy(id => id));
 
             if (cachedPreviews == null || cachedPreviewKey != key)
             {
@@ -386,7 +512,11 @@ namespace JustEnoughEditor
                 var obj = targets[i];
                 if (obj == null) continue;
 
-                var entry = new PreviewEntry { Target = obj };
+                var entry = new PreviewEntry
+                {
+                    Target = obj,
+                    SequenceNumber = BulkRenameOperations.FormatNumber(i, pipeline)
+                };
                 try
                 {
                     if (JEEAssetUtility.IsAsset(obj)) FillAssetPreview(ref entry, obj, i);
@@ -402,6 +532,20 @@ namespace JustEnoughEditor
                 }
 
                 entries.Add(entry);
+            }
+
+            var destinationKeys = entries
+                .Select(entry => IsIncluded(entry) && !entry.Skip && entry.WillChange
+                    ? entry.DestinationKey
+                    : null)
+                .ToList();
+
+            foreach (var entryIndex in BulkRenameOperations.FindDuplicateIndexes(destinationKeys))
+            {
+                var entry = entries[entryIndex];
+                entry.Skip = true;
+                entry.SkipReason = "Multiple targets would use this name";
+                entries[entryIndex] = entry;
             }
 
             return entries;
@@ -436,11 +580,13 @@ namespace JustEnoughEditor
             var directory = Path.GetDirectoryName(path) ?? "";
             var newPath = (directory.Length > 0 ? directory + "/" : "") + newBase + extension;
             newPath = newPath.Replace('\\', '/');
+            entry.DestinationKey = newPath;
 
-            if (!string.Equals(newPath, path, StringComparison.OrdinalIgnoreCase) && File.Exists(newPath))
+            if (!string.Equals(newPath, path, StringComparison.OrdinalIgnoreCase) &&
+                AssetDatabase.LoadMainAssetAtPath(newPath) != null)
             {
                 entry.Skip = true;
-                entry.SkipReason = "A file with this name already exists";
+                entry.SkipReason = "An asset with this name already exists";
             }
         }
 
@@ -462,21 +608,56 @@ namespace JustEnoughEditor
 
         private void DrawPreview(List<PreviewEntry> previews)
         {
-            var changeCount = previews.Count(p => !p.Skip && p.WillChange);
+            var changeCount = previews.Count(p => IsIncluded(p) && !p.Skip && p.WillChange);
             var skipCount = previews.Count(p => p.Skip);
-            EditorGUILayout.LabelField($"Preview — {changeCount} will change, {skipCount} skipped", EditorStyles.boldLabel);
+            var excludedCount = previews.Count(p => p.WillChange && !p.Skip && !IsIncluded(p));
+
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField(
+                $"Preview — {changeCount} selected, {skipCount} skipped" +
+                (excludedCount > 0 ? $", {excludedCount} excluded" : ""),
+                EditorStyles.boldLabel);
+            showChangesOnly = GUILayout.Toggle(showChangesOnly, "Changes only", "Button", GUILayout.Width(100f));
+            EditorGUILayout.EndHorizontal();
+
+            if (previews.Count == 0)
+            {
+                EditorGUILayout.HelpBox("Select or drop items to begin.", MessageType.Info);
+                return;
+            }
 
             previewScroll = EditorGUILayout.BeginScrollView(previewScroll, GUILayout.MinHeight(120f), GUILayout.ExpandHeight(true));
 
-            var halfWidth = Mathf.Max(120f, (position.width - 60f) / 2f);
-            foreach (var p in previews)
+            var halfWidth = Mathf.Max(100f, (position.width - 110f) / 2f);
+            var showSequenceNumber = UsesNumberToken();
+            for (var i = 0; i < previews.Count; i++)
             {
+                var p = previews[i];
+                if (showChangesOnly && !p.WillChange && !p.Skip) continue;
+
                 EditorGUILayout.BeginHorizontal();
+                var included = IsIncluded(p);
+                var canSelect = p.WillChange;
+                using (new EditorGUI.DisabledScope(!canSelect))
+                {
+                    var newIncluded = EditorGUILayout.Toggle(canSelect && included, GUILayout.Width(18f));
+                    if (canSelect && newIncluded != included)
+                    {
+                        if (newIncluded) excludedTargetIds.Remove(p.Target.GetInstanceID());
+                        else excludedTargetIds.Add(p.Target.GetInstanceID());
+                        included = newIncluded;
+                        cachedPreviewKey = null;
+                    }
+                }
+
+                EditorGUILayout.LabelField(showSequenceNumber ? $"#{p.SequenceNumber}" : $"#{i + 1}", GUILayout.Width(34f));
                 EditorGUILayout.LabelField(new GUIContent(p.OldName, p.OldName), GUILayout.Width(halfWidth));
                 EditorGUILayout.LabelField("→", GUILayout.Width(20f));
 
                 if (p.Skip)
                     EditorGUILayout.LabelField(new GUIContent($"(skip: {p.SkipReason})", p.SkipReason), skippedStyle);
+                else if (!included)
+                    EditorGUILayout.LabelField(new GUIContent($"(excluded) {p.NewName}", p.NewName), unchangedStyle);
                 else if (p.WillChange)
                     EditorGUILayout.LabelField(new GUIContent(p.NewName, p.NewName), changedStyle);
                 else
@@ -488,7 +669,26 @@ namespace JustEnoughEditor
             EditorGUILayout.EndScrollView();
         }
 
+        private bool IsIncluded(PreviewEntry entry)
+        {
+            return entry.Target != null && !excludedTargetIds.Contains(entry.Target.GetInstanceID());
+        }
+
         // ---- 適用 ----
+
+        private void ConfirmAndApply(List<PreviewEntry> previews)
+        {
+            var selected = previews.Where(IsIncluded).ToList();
+            var assetCount = selected.Count(p => !p.Skip && p.WillChange && JEEAssetUtility.IsAsset(p.Target));
+            if (assetCount > 0 && !EditorUtility.DisplayDialog(
+                    "Rename assets?",
+                    $"{assetCount} asset rename(s) cannot be undone. Review the preview before continuing.",
+                    "Rename",
+                    "Cancel"))
+                return;
+
+            ApplyRename(selected);
+        }
 
         private void ApplyRename(List<PreviewEntry> previews)
         {

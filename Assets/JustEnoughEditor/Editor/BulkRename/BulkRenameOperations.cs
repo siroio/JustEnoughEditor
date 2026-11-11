@@ -123,6 +123,7 @@ namespace JustEnoughEditor.BulkRename
         // Unity が複製時に付ける " (1)" 形式の末尾サフィックス
         private static readonly Regex DuplicateSuffixRegex = new Regex(@"\s*\(\d+\)\s*$", RegexOptions.Compiled);
         private static readonly Regex WhitespaceRunRegex = new Regex(@"\s{2,}", RegexOptions.Compiled);
+        private static readonly string[] ReservedWindowsDeviceNames = { "CON", "PRN", "AUX", "NUL" };
 
         /// <summary>トリム / 空白正規化 / 重複サフィックス除去を適用する。順序: サフィックス除去 → 空白圧縮 → トリム。</summary>
         public static string ApplyTrimNormalize(string name, RenameStep step)
@@ -136,13 +137,33 @@ namespace JustEnoughEditor.BulkRename
             return result;
         }
 
+        /// <summary>大文字小文字を区別せず重複している値の全インデックスを返す。</summary>
+        public static int[] FindDuplicateIndexes(IReadOnlyList<string> values)
+        {
+            return values
+                .Select((value, index) => new { value, index })
+                .Where(item => item.value != null)
+                .GroupBy(item => item.value, StringComparer.OrdinalIgnoreCase)
+                .Where(group => group.Count() > 1)
+                .SelectMany(group => group.Select(item => item.index))
+                .ToArray();
+        }
+
         /// <summary>ファイル名として使用できない文字を含んでいないかを検証する(空文字列は無効とみなす)。</summary>
         public static bool IsValidFileName(string name)
         {
             if (string.IsNullOrEmpty(name)) return false;
 
             var invalidChars = Path.GetInvalidFileNameChars();
-            return name.IndexOfAny(invalidChars) < 0;
+            if (name.IndexOfAny(invalidChars) >= 0) return false;
+
+            var stem = name.Split('.')[0];
+            if (ReservedWindowsDeviceNames.Contains(stem, StringComparer.OrdinalIgnoreCase)) return false;
+
+            return stem.Length != 4 ||
+                   (!stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase) &&
+                    !stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)) ||
+                   "123456789¹²³".IndexOf(stem[3]) < 0;
         }
 
         private static string ApplyFindReplaceStep(string name, string originalName, int index, RenameStep step, RenamePipeline pipeline)
