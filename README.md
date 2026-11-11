@@ -32,6 +32,27 @@ Unity を開くと、上部メニューに `JEE` が追加されます。
 
 Unity の Preferences から設定したい場合は、`Edit > Preferences > Just Enough Editor` を開きます。
 
+## スクリプトから使う
+
+Unity 6.0 以降では、公開ユーティリティを自作の Editor 拡張から利用できます。使用するスクリプトは `Editor` フォルダに置くか、Editor 専用の asmdef に含めてください。
+
+その asmdef の参照に `JustEnoughEditor.Utilities` を追加します。
+
+```json
+"references": [
+  "JustEnoughEditor.Utilities"
+]
+```
+
+```csharp
+var data = JEEAssetUtility.LoadOrCreateAsset<MyEditorData>("Assets/Editor/MyEditorData.asset");
+Debug.Log(JEEHierarchyUtility.GetPath(Selection.activeTransform));
+
+JEEEditorStyles.BeginCard("My Tool");
+EditorGUILayout.LabelField("Ready");
+JEEEditorStyles.EndCard();
+```
+
 ## 最初に確認する設定
 
 `JEE > Settings` を開くと、現在の ON/OFF 状態と基本設定をまとめて変更できます。

@@ -138,7 +138,7 @@ namespace JustEnoughEditor
             DrawPreview(previews);
 
             EditorGUILayout.Space();
-            if (targets.Any(t => t != null && IsAsset(t)))
+            if (targets.Any(t => t != null && JEEAssetUtility.IsAsset(t)))
                 EditorGUILayout.HelpBox("Renaming assets cannot be undone.", MessageType.Warning);
 
             var changeCount = previews.Count(p => !p.Skip && p.WillChange);
@@ -389,7 +389,7 @@ namespace JustEnoughEditor
                 var entry = new PreviewEntry { Target = obj };
                 try
                 {
-                    if (IsAsset(obj)) FillAssetPreview(ref entry, obj, i);
+                    if (JEEAssetUtility.IsAsset(obj)) FillAssetPreview(ref entry, obj, i);
                     else FillGameObjectPreview(ref entry, obj, i);
                 }
                 catch (Exception e)
@@ -490,11 +490,6 @@ namespace JustEnoughEditor
 
         // ---- 適用 ----
 
-        private static bool IsAsset(Object obj)
-        {
-            return !string.IsNullOrEmpty(AssetDatabase.GetAssetPath(obj));
-        }
-
         private void ApplyRename(List<PreviewEntry> previews)
         {
             var successCount = 0;
@@ -509,7 +504,7 @@ namespace JustEnoughEditor
                     continue;
                 }
 
-                if (IsAsset(entry.Target))
+                if (JEEAssetUtility.IsAsset(entry.Target))
                 {
                     var path = AssetDatabase.GetAssetPath(entry.Target);
                     var error = AssetDatabase.RenameAsset(path, entry.NewBaseName);

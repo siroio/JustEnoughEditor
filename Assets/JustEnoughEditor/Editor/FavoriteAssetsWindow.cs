@@ -26,27 +26,7 @@ namespace JustEnoughEditor
         private Vector2 scrollPosition;
         private string searchQuery = "";
 
-        // このスクリプト自身の場所を基準に Data/ フォルダのパスを動的に解決する。
-        // スクリプトがどこに置かれていても JustEnoughEditor/Data/ に保存される。
-        private static string SharedDataDir
-        {
-            get
-            {
-                var guids = AssetDatabase.FindAssets("FavoriteAssetsWindow t:Script");
-                if (guids.Length > 0)
-                {
-                    var scriptPath = AssetDatabase.GUIDToAssetPath(guids[0]);
-                    // .../JustEnoughEditor/Editor/FavoriteAssetsWindow.cs
-                    // → .../JustEnoughEditor/Data
-                    var editorDir = Path.GetDirectoryName(scriptPath); // .../Editor
-                    var packageDir = Path.GetDirectoryName(editorDir); // .../JustEnoughEditor
-                    return packageDir.Replace('\\', '/') + "/Data";
-                }
-
-                // フォールバック
-                return "Assets/JustEnoughEditor/Data";
-            }
-        }
+        private static string SharedDataDir => JEEAssetUtility.GetSharedDataDirectory(nameof(FavoriteAssetsWindow));
 
         private static string SharedDataPath => SharedDataDir + "/" + DataFileName;
 
@@ -92,26 +72,7 @@ namespace JustEnoughEditor
             if (Event.current.type != EventType.Repaint) return;
 
             if (!folderColors.TryGetValue(guid, out var color)) return;
-            if (color == new Color(0, 0, 0, 0)) return; // 色なし(デフォルト)の場合はスキップ
-
-            if (selectionRect.height > 20)
-            {
-                // Grid View (アイコン表示)
-                // アイコンの左側に垂直なカラーバーを描画
-                var leftBarRect = new Rect(selectionRect.x + 4, selectionRect.y + 4, 4, selectionRect.width - 8);
-                EditorGUI.DrawRect(leftBarRect, new Color(color.r, color.g, color.b, 1f));
-            }
-            else
-            {
-                // List View (リスト表示)
-                // アイコンの左側にカラーバーを描画
-                // selectionRect.x はテキストの開始位置、アイコンは x - 16 なので x - 20 に配置
-                var barX = selectionRect.x - 20f;
-                if (barX < 2) barX = 2; // 最左端のガード
-
-                var leftBarRect = new Rect(barX, selectionRect.y + 2, 4, selectionRect.height - 4);
-                EditorGUI.DrawRect(leftBarRect, new Color(color.r, color.g, color.b, 1f));
-            }
+            JEEEditorStyles.DrawProjectColorBar(selectionRect, color);
         }
 
         private static void LoadStaticData()
@@ -172,19 +133,7 @@ namespace JustEnoughEditor
         private void DrawSearchField()
         {
             GUILayout.BeginHorizontal(EditorStyles.toolbar);
-            GUILayout.Label(EditorGUIUtility.IconContent("Search Icon").image, GUILayout.Width(18),
-                GUILayout.Height(18));
-            var searchStyle = JEEEditorStyles.SearchFieldStyle();
-            searchQuery = GUILayout.TextField(searchQuery, searchStyle, GUILayout.MinWidth(120),
-                GUILayout.ExpandWidth(true));
-            using (new EditorGUI.DisabledScope(string.IsNullOrEmpty(searchQuery)))
-            {
-                if (GUILayout.Button(new GUIContent("Clear", "Clear search"), GUILayout.Width(52)))
-                {
-                    searchQuery = "";
-                    GUI.FocusControl(null);
-                }
-            }
+            searchQuery = JEEEditorStyles.DrawSearchField(searchQuery, new GUIContent("Clear", "Clear search"));
 
             GUILayout.EndHorizontal();
         }
@@ -205,7 +154,7 @@ namespace JustEnoughEditor
                 DragAndDrop.AcceptDrag();
                 var added = false;
                 foreach (var path in DragAndDrop.paths)
-                    if (IsValidAssetPath(path) && AddItem(path))
+                    if (JEEAssetUtility.IsValidAssetPath(path) && AddItem(path))
                         added = true;
 
                 if (added)
@@ -302,7 +251,7 @@ namespace JustEnoughEditor
                     }
 
                     if (GUILayout.Button(new GUIContent("Open", isFolder ? "Open folder" : "Open asset"),
-                            GUILayout.Width(46), GUILayout.Height(20))) OpenItem(path);
+                            GUILayout.Width(46), GUILayout.Height(20))) JEEAssetUtility.TryOpenAsset(path);
 
                     if (GUILayout.Button(
                             new GUIContent(EditorGUIUtility.IconContent("TreeEditor.Trash").image, "Remove"),
@@ -427,7 +376,7 @@ namespace JustEnoughEditor
             if (!rowRect.Contains(evt.mousePosition))
                 return;
 
-            OpenItem(path);
+            JEEAssetUtility.TryOpenAsset(path);
             evt.Use();
         }
 
@@ -476,18 +425,10 @@ namespace JustEnoughEditor
             }
         }
 
-        private static bool IsValidAssetPath(string path)
-        {
-            if (string.IsNullOrEmpty(path))
-                return false;
-
-            return !string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(path));
-        }
-
         private static bool HasValidDraggedAsset()
         {
             foreach (var path in DragAndDrop.paths)
-                if (IsValidAssetPath(path))
+                if (JEEAssetUtility.IsValidAssetPath(path))
                     return true;
 
             return false;
@@ -499,16 +440,6 @@ namespace JustEnoughEditor
                 return path;
 
             return "..." + path.Substring(path.Length - maxLength + 3);
-        }
-
-        private static void OpenItem(string path)
-        {
-            var obj = AssetDatabase.LoadAssetAtPath<Object>(path);
-            if (obj == null)
-                return;
-
-            Selection.activeObject = obj;
-            AssetDatabase.OpenAsset(obj);
         }
 
         private void AddSelectedItems()
@@ -611,18 +542,7 @@ namespace JustEnoughEditor
             }
             else
             {
-                var dataAsset = AssetDatabase.LoadAssetAtPath<FavoriteAssetsData>(SharedDataPath);
-                if (dataAsset == null)
-                {
-                    if (!AssetDatabase.IsValidFolder(SharedDataDir))
-                    {
-                        Directory.CreateDirectory(SharedDataDir);
-                        AssetDatabase.Refresh();
-                    }
-
-                    dataAsset = CreateInstance<FavoriteAssetsData>();
-                    AssetDatabase.CreateAsset(dataAsset, SharedDataPath);
-                }
+                var dataAsset = JEEAssetUtility.LoadOrCreateAsset<FavoriteAssetsData>(SharedDataPath);
 
                 // 深いコピーで保存
                 dataAsset.items.Clear();

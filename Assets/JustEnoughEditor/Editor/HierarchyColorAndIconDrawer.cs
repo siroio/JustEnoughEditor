@@ -286,7 +286,7 @@ namespace JustEnoughEditor
             GUI.Label(new Rect(selectionRect.x + 18, selectionRect.y, selectionRect.width - 18, selectionRect.height),
                 obj.name, style);
 
-            var depth = GetDepth(obj.transform);
+            var depth = JEEHierarchyUtility.GetDepth(obj.transform);
             var depthColor = s_depthColors[Mathf.Min(depth, s_depthColors.Length - 1)];
             EditorGUI.DrawRect(new Rect(selectionRect.x - 4, selectionRect.y, 2, selectionRect.height),
                 new Color(depthColor.r, depthColor.g, depthColor.b, 1f));
@@ -300,7 +300,7 @@ namespace JustEnoughEditor
         {
             if (Event.current.type != EventType.Repaint) return;
 
-            var depth = GetDepth(obj.transform);
+            var depth = JEEHierarchyUtility.GetDepth(obj.transform);
             var bgColor = s_depthColors[Mathf.Min(depth, s_depthColors.Length - 1)];
 
             if (bgColor.a <= 0f) return;
@@ -334,8 +334,8 @@ namespace JustEnoughEditor
             if (selected == null || !IsInSelectedScope(obj.transform, selected.transform)) return;
             if (obj == selected && IsLastVisibleInSelectedScope(obj.transform, selected.transform)) return;
 
-            var selectedDepth = GetDepth(selected.transform);
-            var currentDepth = GetDepth(obj.transform);
+            var selectedDepth = JEEHierarchyUtility.GetDepth(selected.transform);
+            var currentDepth = JEEHierarchyUtility.GetDepth(obj.transform);
             var guideX = selectionRect.x - (currentDepth - selectedDepth) * k_HierarchyIndentWidth - 4f;
 
             var scopeColor = s_depthColors[Mathf.Min(selectedDepth, s_depthColors.Length - 1)];
@@ -619,21 +619,6 @@ namespace JustEnoughEditor
             }
 
             return guid;
-        }
-
-        /// <summary>
-        /// Transform の親を辿って階層の深さを返す。
-        /// </summary>
-        private static int GetDepth(Transform t)
-        {
-            var depth = 0;
-            while (t.parent != null)
-            {
-                depth++;
-                t = t.parent;
-            }
-
-            return depth;
         }
 
         private static bool IsInSelectedScope(Transform target, Transform selected)

@@ -136,19 +136,7 @@ namespace JustEnoughEditor
         private void DrawSearchField()
         {
             EditorGUILayout.BeginHorizontal(JEEEditorStyles.ToolbarCard);
-            GUILayout.Label(EditorGUIUtility.IconContent("Search Icon").image, GUILayout.Width(18),
-                GUILayout.Height(18));
-            var searchStyle = JEEEditorStyles.SearchFieldStyle();
-            m_searchQuery = GUILayout.TextField(m_searchQuery, searchStyle, GUILayout.MinWidth(120),
-                GUILayout.ExpandWidth(true));
-            using (new EditorGUI.DisabledScope(string.IsNullOrEmpty(m_searchQuery)))
-            {
-                if (GUILayout.Button("Clear", GUILayout.Width(52)))
-                {
-                    m_searchQuery = "";
-                    GUI.FocusControl(null);
-                }
-            }
+            m_searchQuery = JEEEditorStyles.DrawSearchField(m_searchQuery, new GUIContent("Clear"));
 
             EditorGUILayout.EndHorizontal();
         }

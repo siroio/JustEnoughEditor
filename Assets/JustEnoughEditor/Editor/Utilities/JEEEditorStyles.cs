@@ -274,6 +274,34 @@ namespace JustEnoughEditor
                    EditorStyles.toolbarTextField;
         }
 
+        public static string DrawSearchField(string query, GUIContent clearButton)
+        {
+            GUILayout.Label(EditorGUIUtility.IconContent("Search Icon").image, GUILayout.Width(18),
+                GUILayout.Height(18));
+            query = GUILayout.TextField(query, SearchFieldStyle(), GUILayout.MinWidth(120),
+                GUILayout.ExpandWidth(true));
+            using (new EditorGUI.DisabledScope(string.IsNullOrEmpty(query)))
+            {
+                if (GUILayout.Button(clearButton, GUILayout.Width(52)))
+                {
+                    query = "";
+                    GUI.FocusControl(null);
+                }
+            }
+
+            return query;
+        }
+
+        public static void DrawProjectColorBar(Rect selectionRect, Color color)
+        {
+            if (Event.current.type != EventType.Repaint || color == Color.clear) return;
+
+            var barRect = selectionRect.height > 20
+                ? new Rect(selectionRect.x + 4, selectionRect.y + 4, 4, selectionRect.width - 8)
+                : new Rect(Mathf.Max(2, selectionRect.x - 20), selectionRect.y + 2, 4, selectionRect.height - 4);
+            EditorGUI.DrawRect(barRect, new Color(color.r, color.g, color.b, 1f));
+        }
+
         public static void DrawStatusLabel(string label, bool enabled, params GUILayoutOption[] options)
         {
             var rect = GUILayoutUtility.GetRect(new GUIContent(enabled ? $"{label}: ON" : $"{label}: OFF"),

@@ -22,26 +22,7 @@ namespace JustEnoughEditor
         private const string PrefsKey = "JustEnoughEditor_FavoriteFolders";
         private const string DataFileName = "FavoriteFoldersData.asset";
 
-        // このスクリプト自身の場所を基準に Data/ フォルダのパスを動的に解決する。
-        // スクリプトがどこに置かれていても JustEnoughEditor/Data/ に保存される。
-        private static string SharedDataDir
-        {
-            get
-            {
-                var guids = AssetDatabase.FindAssets("FavoriteFoldersWindow t:Script");
-                if (guids.Length > 0)
-                {
-                    string scriptPath = AssetDatabase.GUIDToAssetPath(guids[0]);
-                    // .../JustEnoughEditor/Editor/FavoriteFoldersWindow.cs
-                    // → .../JustEnoughEditor/Data
-                    string editorDir = Path.GetDirectoryName(scriptPath); // .../Editor
-                    string packageDir = Path.GetDirectoryName(editorDir); // .../JustEnoughEditor
-                    return packageDir.Replace('\\', '/') + "/Data";
-                }
-                // フォールバック
-                return "Assets/JustEnoughEditor/Data";
-            }
-        }
+        private static string SharedDataDir => JEEAssetUtility.GetSharedDataDirectory(nameof(FavoriteFoldersWindow));
 
         private static string SharedDataPath => SharedDataDir + "/" + DataFileName;
 
@@ -66,26 +47,7 @@ namespace JustEnoughEditor
             if (Event.current.type != EventType.Repaint) return;
 
             if (!folderColors.TryGetValue(guid, out Color color)) return;
-            if (color == new Color(0, 0, 0, 0)) return; // 色なし(デフォルト)の場合はスキップ
-
-            if (selectionRect.height > 20)
-            {
-                // Grid View (アイコン表示)
-                // アイコンの左側に垂直なカラーバーを描画
-                Rect leftBarRect = new Rect(selectionRect.x + 4, selectionRect.y + 4, 4, selectionRect.width - 8);
-                EditorGUI.DrawRect(leftBarRect, new Color(color.r, color.g, color.b, 1f));
-            }
-            else
-            {
-                // List View (リスト表示)
-                // アイコンの左側にカラーバーを描画
-                // selectionRect.x はテキストの開始位置、アイコンは x - 16 なので x - 20 に配置
-                float barX = selectionRect.x - 20f;
-                if (barX < 2) barX = 2; // 最左端のガード
-                
-                Rect leftBarRect = new Rect(barX, selectionRect.y + 2, 4, selectionRect.height - 4);
-                EditorGUI.DrawRect(leftBarRect, new Color(color.r, color.g, color.b, 1f));
-            }
+            JEEEditorStyles.DrawProjectColorBar(selectionRect, color);
         }
 
         private static void LoadStaticData()
@@ -389,17 +351,7 @@ namespace JustEnoughEditor
             }
             else
             {
-                var dataAsset = AssetDatabase.LoadAssetAtPath<FavoriteFoldersData>(SharedDataPath);
-                if (dataAsset == null)
-                {
-                    if (!AssetDatabase.IsValidFolder(SharedDataDir))
-                    {
-                        Directory.CreateDirectory(SharedDataDir);
-                        AssetDatabase.Refresh();
-                    }
-                    dataAsset = ScriptableObject.CreateInstance<FavoriteFoldersData>();
-                    AssetDatabase.CreateAsset(dataAsset, SharedDataPath);
-                }
+                var dataAsset = JEEAssetUtility.LoadOrCreateAsset<FavoriteFoldersData>(SharedDataPath);
                 
                 // 深いコピーで保存
                 dataAsset.items.Clear();

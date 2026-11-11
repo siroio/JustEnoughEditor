@@ -71,7 +71,7 @@ namespace JustEnoughEditor
                 {
                     GUILayout.Label(EditorGUIUtility.IconContent("GameObject Icon").image, GUILayout.Width(20),
                         GUILayout.Height(20));
-                    GUILayout.Label(GetHierarchyPath(target), JEEEditorStyles.MutedLabel, GUILayout.ExpandWidth(true));
+                    GUILayout.Label(JEEHierarchyUtility.GetPath(target.transform), JEEEditorStyles.MutedLabel, GUILayout.ExpandWidth(true));
 
                     if (GUILayout.Button(new GUIContent("Select", "Select GameObject"), GUILayout.Width(56)))
                         Selection.activeGameObject = target;
@@ -130,17 +130,5 @@ namespace JustEnoughEditor
             EditorApplication.RepaintHierarchyWindow();
         }
 
-        private static string GetHierarchyPath(GameObject target)
-        {
-            var path = target.name;
-            var current = target.transform.parent;
-            while (current != null)
-            {
-                path = current.name + "/" + path;
-                current = current.parent;
-            }
-
-            return path;
-        }
     }
 }
