@@ -8,6 +8,24 @@ namespace JustEnoughEditor
     internal static class JEEWindowGroupSettings
     {
         private const string Path = "Project/Just Enough Editor/Window Groups";
+        internal const string AutoExpandCollapseKey = "JustEnoughEditor.WindowGroups.AutoExpandCollapse";
+        internal static bool AutoExpandCollapse
+        {
+            get => EditorPrefs.GetBool(AutoExpandCollapseKey, true);
+            set => EditorPrefs.SetBool(AutoExpandCollapseKey, value);
+        }
+
+        [SettingsProvider]
+        internal static SettingsProvider CreateUserProvider() => new SettingsProvider("Preferences/Just Enough Editor/Window Groups", SettingsScope.User)
+        {
+            label = "Window Groups",
+            guiHandler = _ =>
+            {
+                AutoExpandCollapse = EditorGUILayout.Toggle("Auto expand / collapse", AutoExpandCollapse);
+                EditorGUILayout.LabelField("Expand a group when one of its tabs receives focus. Collapse other groups to their last-used tab. Turn off to use the tab context menu instead.", EditorStyles.wordWrappedLabel);
+            },
+            keywords = new[] { "tabs", "groups", "focus", "automatic", "collapse" }
+        };
 
         [SettingsProvider]
         internal static SettingsProvider CreateProvider() => new SettingsProvider(Path, SettingsScope.Project)
@@ -31,6 +49,8 @@ namespace JustEnoughEditor
         private static void Draw()
         {
             EditorGUILayout.LabelField("Groups in your current editor layout. Right-click a tab to create a group. Colors are assigned automatically.", EditorStyles.wordWrappedLabel);
+            if (GUILayout.Button("User Preferences…", GUILayout.Width(140)))
+                SettingsService.OpenUserPreferences("Preferences/Just Enough Editor/Window Groups");
             if (JEEDockAdapter.UnavailableReason != null)
             {
                 EditorGUILayout.HelpBox(JEEDockAdapter.UnavailableReason, MessageType.Warning);
@@ -42,12 +62,12 @@ namespace JustEnoughEditor
             {
                 using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
                 {
-                    var canEdit = !group.maximized && JEEDockAdapter.IsOrdinaryDock(JEEDockAdapter.Dock(group));
+                    var canEdit = !group.members.Any(w => w && w.maximized) && JEEDockAdapter.IsOrdinaryDock(group.ownerDock);
                     using (new EditorGUI.DisabledScope(!canEdit))
                     {
                         using (new EditorGUILayout.HorizontalScope())
                         {
-                            GUILayout.Label(group.titleContent.image, GUILayout.Width(18), GUILayout.Height(18));
+                            EditorGUI.DrawRect(GUILayoutUtility.GetRect(12, 18, GUILayout.Width(12)), group.groupColor);
                             EditorGUI.BeginChangeCheck();
                             var name = EditorGUILayout.DelayedTextField(group.groupName);
                             if (EditorGUI.EndChangeCheck())
@@ -64,7 +84,8 @@ namespace JustEnoughEditor
                         {
                             using (new EditorGUILayout.HorizontalScope())
                             {
-                                EditorGUILayout.LabelField(new GUIContent(member.titleContent.text + "  #" + member.GetInstanceID(), member.titleContent.image, member.GetType().FullName));
+                                var title = group.MemberTitle(member);
+                                EditorGUILayout.LabelField(new GUIContent(title.text + "  #" + member.GetInstanceID(), title.image, member.GetType().FullName));
                                 if (GUILayout.Button(new GUIContent("Remove", "Keep this window as an ungrouped tab"), GUILayout.Width(72)))
                                     group.Schedule(() => JEEWindowGroups.RemoveMember(group, member));
                             }

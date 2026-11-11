@@ -19,6 +19,7 @@ namespace JustEnoughEditor.Tests
         private readonly List<EditorWindow> owned = new List<EditorWindow>();
         private GroupTestWindow anchor, first, second;
         private object dock;
+        private bool autoMode, hadAutoPreference;
 
         private static object Dock(EditorWindow window) => Parent.GetValue(window);
         private static EditorWindow[] Tabs(object target) => ((IEnumerable)DockType.GetField("m_Panes", Flags).GetValue(target)).Cast<EditorWindow>().ToArray();
@@ -49,6 +50,9 @@ namespace JustEnoughEditor.Tests
         [SetUp]
         public void SetUp()
         {
+            hadAutoPreference = EditorPrefs.HasKey(JEEWindowGroupSettings.AutoExpandCollapseKey);
+            autoMode = JEEWindowGroupSettings.AutoExpandCollapse;
+            JEEWindowGroupSettings.AutoExpandCollapse = false;
             anchor = Window(0, true); dock = Dock(anchor);
             first = Window(17); second = Window(29);
             Move(first, dock); Move(second, dock);
@@ -59,6 +63,8 @@ namespace JustEnoughEditor.Tests
             foreach (var group in owned.OfType<JEEWindowGroup>().Where(w => w).ToArray()) group.Close();
             foreach (var window in owned.Where(w => w).Reverse().ToArray()) window.Close();
             owned.Clear();
+            if (hadAutoPreference) JEEWindowGroupSettings.AutoExpandCollapse = autoMode;
+            else EditorPrefs.DeleteKey(JEEWindowGroupSettings.AutoExpandCollapseKey);
         }
 
         [Test]
@@ -66,7 +72,7 @@ namespace JustEnoughEditor.Tests
         {
             var group = Group(second, first);
             CollectionAssert.AreEqual(new EditorWindow[] { first, second }, group.members);
-            CollectionAssert.AreEqual(new EditorWindow[] { anchor, group, first, second }, Tabs(dock));
+            CollectionAssert.AreEqual(new EditorWindow[] { anchor, first, second }, Tabs(dock));
             Assert.That(group.groupId, Is.Not.Empty);
         }
 
@@ -83,8 +89,10 @@ namespace JustEnoughEditor.Tests
             var item = items.SingleOrDefault(i => MenuLabel(i) == label);
             Assert.That(item, Is.Not.Null, "Native tab menu must contain " + label);
             var callback = item.GetType().GetField("func").GetValue(item) as GenericMenu.MenuFunction;
-            Assert.That(callback, Is.Not.Null, "Menu item must be enabled");
-            callback();
+            var callbackWithData = item.GetType().GetField("func2").GetValue(item) as GenericMenu.MenuFunction2;
+            Assert.That(callback != null || callbackWithData != null, Is.True, "Menu item must be enabled");
+            if (callbackWithData != null) callbackWithData(item.GetType().GetField("userData").GetValue(item));
+            else callback();
         }
         private static IEnumerator WaitForMenuAction()
         {
@@ -93,6 +101,79 @@ namespace JustEnoughEditor.Tests
             var deadline = EditorApplication.timeSinceStartup + 3;
             while (!called && EditorApplication.timeSinceStartup < deadline) yield return null;
             Assert.That(called, Is.True, "Deferred native menu actions must run on the editor loop");
+        }
+
+        private EditorWindow AddNativeInspector(object[] items, object destination)
+        {
+            var before = Resources.FindObjectsOfTypeAll<EditorWindow>();
+            var inspectorType = typeof(EditorWindow).Assembly.GetType("UnityEditor.InspectorWindow");
+            var item = items.Single(i => Equals(i.GetType().GetField("userData").GetValue(i), inspectorType));
+            try { ClickMenuItem(items, MenuLabel(item)); }
+            finally { owned.AddRange(Resources.FindObjectsOfTypeAll<EditorWindow>().Except(before)); }
+            return Tabs(destination).Except(before).Single();
+        }
+
+        [UnityTest]
+        public IEnumerator NativeAddTabJoinsClickedGroupAndShowsNewWindow()
+        {
+            var group = Group(first);
+            var other = Group(second);
+            foreach (var collapsed in new[] { false, true })
+            {
+                JEEWindowGroups.SetCollapsed(group, collapsed);
+                second.Focus();
+                var items = NativeMenuItems(group.lastActiveMember);
+                yield return WaitForMenuAction();
+                var added = AddNativeInspector(items, dock);
+                yield return WaitForMenuAction();
+                Assert.That(JEEWindowGroups.FindGroup(added), Is.SameAs(group), "Use the clicked tab's group, not the active tab's group");
+                Assert.That(group.collapsed, Is.False, "Opening a new window must expose its content even in manual mode");
+                Assert.That(Active(dock), Is.SameAs(added));
+                Assert.That(EditorWindow.focusedWindow, Is.SameAs(added));
+                CollectionAssert.AreEqual(new[] { second }, other.members);
+                Assert.That(Tabs(dock).Any(w => w is JEEWindowGroup || w is JEEWindowGroupParking), Is.False);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator NativeAddTabOutsideGroupDoesNotInheritActiveGroup()
+        {
+            var group = Group(first, second);
+            first.Focus();
+            var items = NativeMenuItems(anchor);
+            yield return WaitForMenuAction();
+            var added = AddNativeInspector(items, dock);
+            yield return WaitForMenuAction();
+            Assert.That(JEEWindowGroups.FindGroup(added), Is.Null);
+            CollectionAssert.AreEqual(new[] { first, second }, group.members);
+        }
+
+        [UnityTest]
+        public IEnumerator NativeAddTabDoesNotUseGroupMovedAfterMenuOpened()
+        {
+            var group = Group(first);
+            var items = NativeMenuItems(first);
+            yield return WaitForMenuAction();
+            var elsewhere = Window(93, true);
+            Move(first, Dock(elsewhere));
+            JEEWindowGroups.Reconcile();
+            var added = AddNativeInspector(items, dock);
+            yield return WaitForMenuAction();
+            Assert.That(JEEWindowGroups.FindGroup(added), Is.Null);
+            Assert.That(Dock(added), Is.SameAs(dock), "Preserve the native menu destination");
+        }
+
+        [UnityTest]
+        public IEnumerator CancelledAddTabMenuDoesNotCaptureLaterWindow()
+        {
+            var group = Group(first);
+            NativeMenuItems(first);
+            yield return WaitForMenuAction();
+            var added = Window(93);
+            Move(added, dock);
+            yield return WaitForMenuAction();
+            Assert.That(JEEWindowGroups.FindGroup(added), Is.Null);
+            CollectionAssert.AreEqual(new[] { first }, group.members);
         }
 
         [UnityTest]
@@ -108,7 +189,8 @@ namespace JustEnoughEditor.Tests
             owned.Add(group);
             CollectionAssert.AreEqual(new[] { first }, group.members);
             Assert.That(JEEWindowGroups.FindGroup(second), Is.Null);
-            Assert.That(Dock(group), Is.SameAs(dock));
+            Assert.That(group.ownerDock, Is.SameAs(dock));
+            CollectionAssert.DoesNotContain(Tabs(dock), group);
         }
 
         [UnityTest]
@@ -172,20 +254,20 @@ namespace JustEnoughEditor.Tests
             CollectionAssert.Contains(labels, "Close Tab");
         }
 
-        private static object[] HeadingMenuItems(JEEWindowGroup group)
+        private static object[] GroupMenuItems(JEEWindowGroup group)
         {
             var menu = new GenericMenu();
-            group.AddItemsToMenu(menu);
+            group.AddItemsToMenu(menu, "");
             return ((IEnumerable)typeof(GenericMenu).GetProperty("menuItems", Flags).GetValue(menu)).Cast<object>().ToArray();
         }
 
         [UnityTest]
-        public IEnumerator QuickAddHeadingMenuTargetsExactWindowAndPreservesCollapse()
+        public IEnumerator QuickAddGroupMenuTargetsExactWindowAndPreservesCollapse()
         {
             var group = Group(first);
             JEEWindowGroups.SetCollapsed(group, true);
             Window(40, true);
-            var items = HeadingMenuItems(group);
+            var items = GroupMenuItems(group);
             var additions = items.Where(i => MenuLabel(i).StartsWith("Add Tab/")).ToArray();
             Assert.That(additions.Length, Is.EqualTo(2), "Only ungrouped tabs from this dock can be added");
             var label = additions.Select(MenuLabel).Single(s => s.EndsWith("(#" + second.GetInstanceID() + ")"));
@@ -197,10 +279,10 @@ namespace JustEnoughEditor.Tests
         }
 
         [UnityTest]
-        public IEnumerator QuickAddHeadingMenuRejectsTabMovedWhileMenuWasOpen()
+        public IEnumerator QuickAddGroupMenuRejectsTabMovedWhileMenuWasOpen()
         {
             var group = Group(first);
-            var items = HeadingMenuItems(group);
+            var items = GroupMenuItems(group);
             var label = items.Select(MenuLabel).SingleOrDefault(s => s.StartsWith("Add Tab/") && s.EndsWith("(#" + second.GetInstanceID() + ")"));
             Assert.That(label, Is.Not.Null);
             var outside = Window(40, true);
@@ -210,12 +292,12 @@ namespace JustEnoughEditor.Tests
             CollectionAssert.AreEqual(new[] { first }, group.members);
         }
 
-        private static Vector2 HeadingTabPosition(JEEWindowGroup group)
+        private static Vector2 RepresentativeTabPosition(JEEWindowGroup group)
         {
-            group.SendEvent(new Event { type = EventType.Layout });
-            group.SendEvent(new Event { type = EventType.Repaint });
-            var targetDock = Dock(group);
-            var index = Array.IndexOf(Tabs(targetDock), group);
+            group.lastActiveMember.SendEvent(new Event { type = EventType.Layout });
+            group.lastActiveMember.SendEvent(new Event { type = EventType.Repaint });
+            var targetDock = group.ownerDock;
+            var index = Array.IndexOf(Tabs(targetDock), group.lastActiveMember);
             var area = (Rect)DockType.GetField("m_TabAreaRect", Flags).GetValue(targetDock);
             var style = (GUIStyle)DockType.GetField("tabStyle", Flags).GetValue(targetDock);
             var x = (float)DockType.GetMethod("CalculateTabXPosition", Flags).Invoke(targetDock, new object[] { index });
@@ -252,7 +334,7 @@ namespace JustEnoughEditor.Tests
         public void GroupSettingsMenusReplaceDedicatedManagementActions()
         {
             var group = Group(first);
-            var labels = HeadingMenuItems(group).Select(MenuLabel).ToArray();
+            var labels = GroupMenuItems(group).Select(MenuLabel).ToArray();
             CollectionAssert.Contains(labels, "Settings…");
             CollectionAssert.DoesNotContain(labels, "Rename / Color…");
             CollectionAssert.DoesNotContain(labels, "Add Windows…");
@@ -297,12 +379,12 @@ namespace JustEnoughEditor.Tests
         }
 
         [Test]
-        public void GroupIndicatorSpansOnlyItsHeadingAndMembersWithoutChangingTitles()
+        public void GroupIndicatorSpansOnlyItsMembersWithoutChangingExpandedTitles()
         {
             var original = new GUIContent(first.titleContent);
             var group = Group(first);
             var other = Group(second);
-            HeadingTabPosition(group);
+            RepresentativeTabPosition(group);
             JEEWindowGroups.Reconcile();
             var bounds = GroupIndicatorBounds(group);
             var next = GroupIndicatorBounds(other);
@@ -317,11 +399,11 @@ namespace JustEnoughEditor.Tests
             var draws = 0;
             var draw = indicator.onGUIHandler;
             indicator.onGUIHandler = () => { if (Event.current.type == EventType.Repaint) draws++; draw(); };
-            group.SendEvent(new Event { type = EventType.Layout });
-            group.SendEvent(new Event { type = EventType.Repaint });
+            group.lastActiveMember.SendEvent(new Event { type = EventType.Layout });
+            group.lastActiveMember.SendEvent(new Event { type = EventType.Repaint });
             Assert.That(draws, Is.GreaterThan(0), "Unity must draw the indicator through the native dock's panel");
             JEEWindowGroups.SetCollapsed(group, true);
-            HeadingTabPosition(group);
+            RepresentativeTabPosition(group);
             var collapsed = GroupIndicatorBounds(group);
             Assert.That(collapsed.width, Is.LessThan(bounds.width), "Collapsed line must stop at the heading");
         }
@@ -331,10 +413,10 @@ namespace JustEnoughEditor.Tests
         {
             for (var i = 0; i < 8; i++) Move(Window(100 + i), dock);
             var group = Group(Tabs(dock).Skip(1).ToArray());
-            HeadingTabPosition(group);
+            RepresentativeTabPosition(group);
             var area = (Rect)DockType.GetField("m_TabAreaRect", Flags).GetValue(dock);
             DockType.GetField("m_ScrollOffset", Flags).SetValue(dock, 50f);
-            group.SendEvent(new Event { type = EventType.Repaint });
+            group.lastActiveMember.SendEvent(new Event { type = EventType.Repaint });
             var bounds = GroupIndicatorBounds(group);
             var left = (Rect)DockType.GetField("m_ScrollLeftRect", Flags).GetValue(dock);
             var right = (Rect)DockType.GetField("m_ScrollRightRect", Flags).GetValue(dock);
@@ -349,16 +431,17 @@ namespace JustEnoughEditor.Tests
         public void GroupIndicatorFollowsMovedGroupAndIsRemovedOnUngroup()
         {
             var group = Group(first, second);
-            HeadingTabPosition(group);
+            RepresentativeTabPosition(group);
             JEEWindowGroups.Reconcile();
             var name = "jee-group-" + group.groupId;
             var originalRoot = DockVisualTree(dock);
             Assert.That(originalRoot.Q<IMGUIContainer>(name), Is.Not.Null);
             var destination = Window(3, true);
-            Move(group, Dock(destination));
+            JEEWindowGroups.SetCollapsed(group, true);
+            Move(group.lastActiveMember, Dock(destination));
             JEEWindowGroups.Reconcile();
             Assert.That(originalRoot.Q<IMGUIContainer>(name), Is.Null);
-            var root = DockVisualTree(Dock(group));
+            var root = DockVisualTree(group.ownerDock);
             Assert.That(root.Q<IMGUIContainer>(name), Is.Not.Null);
             JEEWindowGroups.Ungroup(group);
             Assert.That(root.Q<IMGUIContainer>(name), Is.Null);
@@ -366,100 +449,107 @@ namespace JustEnoughEditor.Tests
 
         private static void TabInput(JEEWindowGroup group, EventType type, Vector2 position, int button = 0)
         {
-            group.SendEvent(new Event { type = type, mousePosition = position, button = button, clickCount = 1 });
+            group.lastActiveMember.SendEvent(new Event { type = type, mousePosition = position, button = button, clickCount = 1 });
         }
 
         [UnityTest]
-        public IEnumerator NativeHeadingClickSelectsWithoutTogglingExpandedOrCollapsedGroup()
+        public IEnumerator FocusingRepresentativeExpandsWithoutOpeningAHeading()
         {
             var group = Group(first, second);
-            anchor.Focus();
-            var point = HeadingTabPosition(group);
-            TabInput(group, EventType.MouseDown, point);
-            Assert.That(Active(dock), Is.SameAs(group), "The test must hit Unity's real heading tab");
-            yield return WaitForMenuAction();
-            Assert.That(group.collapsed, Is.False, "Press alone must still allow dragging");
-            TabInput(group, EventType.MouseUp, point);
-            yield return WaitForMenuAction();
-            Assert.That(group.collapsed, Is.False, "Selecting a heading must not fold its windows");
+            second.Focus();
             JEEWindowGroups.SetCollapsed(group, true);
-            point = HeadingTabPosition(group);
+            CollectionAssert.AreEqual(new EditorWindow[] { anchor, second }, Tabs(dock));
+            Assert.That(Active(dock), Is.SameAs(second));
+            JEEWindowGroupSettings.AutoExpandCollapse = true;
+            anchor.Focus(); JEEWindowGroups.FollowFocus();
+            var point = RepresentativeTabPosition(group);
             TabInput(group, EventType.MouseDown, point);
             TabInput(group, EventType.MouseUp, point);
             yield return WaitForMenuAction();
-            Assert.That(group.collapsed, Is.True, "Clicking an already-selected heading must not expand it");
-            CollectionAssert.AreEqual(new[] { first, second }, group.members);
+            JEEWindowGroups.FollowFocus();
+            Assert.That(group.collapsed, Is.False);
+            Assert.That(Active(dock), Is.SameAs(second));
+            Assert.That(Tabs(dock).OfType<JEEWindowGroup>(), Is.Empty);
+            first.Focus(); JEEWindowGroups.FollowFocus();
+            Assert.That(group.collapsed, Is.False);
+            Assert.That(Active(dock), Is.SameAs(first));
         }
 
         [UnityTest]
-        public IEnumerator NativeHeadingFocusAndBodyClicksDoNotToggleGroup()
+        public IEnumerator FocusOutsideCollapsesToLastUsedMemberWithoutChangingItsContent()
         {
             var group = Group(first, second);
-            JEEWindowGroups.SetCollapsed(group, true);
-            anchor.Focus(); group.Focus();
+            JEEWindowGroupSettings.AutoExpandCollapse = true;
+            first.Focus(); JEEWindowGroups.FollowFocus();
+            second.Focus(); JEEWindowGroups.FollowFocus();
+            var outside = Window(33, true);
+            outside.Focus();
             yield return WaitForMenuAction();
+            JEEWindowGroups.FollowFocus();
             Assert.That(group.collapsed, Is.True);
-            TabInput(group, EventType.MouseDown, new Vector2(10, 35));
-            TabInput(group, EventType.MouseUp, new Vector2(10, 35));
-            yield return WaitForMenuAction();
-            Assert.That(group.collapsed, Is.True);
+            Assert.That(Active(dock), Is.SameAs(second));
+            Assert.That(EditorWindow.focusedWindow, Is.SameAs(outside));
+            CollectionAssert.AreEqual(new EditorWindow[] { anchor, second }, Tabs(dock));
+            Assert.That(second.value, Is.EqualTo(29));
+            second.Focus(); JEEWindowGroups.FollowFocus();
+            Assert.That(group.collapsed, Is.False);
         }
 
         [UnityTest]
-        public IEnumerator NativeHeadingDragAndRightButtonDoNotToggleGroup()
+        public IEnumerator ManualModeIgnoresFocusChangesAndUsesMemberContextMenu()
         {
             var group = Group(first, second);
-            var point = HeadingTabPosition(group);
-            TabInput(group, EventType.MouseDown, point, 1);
-            TabInput(group, EventType.MouseUp, point, 1);
+            first.Focus(); JEEWindowGroups.FollowFocus();
+            anchor.Focus(); JEEWindowGroups.FollowFocus();
+            Assert.That(group.collapsed, Is.False);
+            ClickMenuItem(NativeMenuItems(first), "Window Groups/Collapse Group");
+            yield return WaitForMenuAction();
+            first.Focus(); JEEWindowGroups.FollowFocus();
+            Assert.That(group.collapsed, Is.True);
+            ClickMenuItem(NativeMenuItems(first), "Window Groups/Expand Group");
             yield return WaitForMenuAction();
             Assert.That(group.collapsed, Is.False);
-            TabInput(group, EventType.MouseDown, point);
-            TabInput(group, EventType.MouseDrag, point + new Vector2(14, 0));
-            TabInput(group, EventType.MouseUp, point);
-            yield return WaitForMenuAction();
-            Assert.That(group.collapsed, Is.False);
-            CollectionAssert.AreEqual(new[] { first, second }, group.members);
+            Assert.That(Active(dock), Is.SameAs(first));
         }
 
         [UnityTest]
-        public IEnumerator ExplicitHeadingMenuKeepsHeadingVisibleWhenExpandedTabsOverflow()
+        public IEnumerator ExplicitMenuKeepsSelectedMemberVisibleWhenExpandedTabsOverflow()
         {
             for (var i = 0; i < 8; i++) Move(Window(100 + i), dock);
             var group = Group(Tabs(dock).Where(w => w != anchor).ToArray());
             JEEWindowGroups.SetCollapsed(group, true);
-            var point = HeadingTabPosition(group);
-            ClickMenuItem(HeadingMenuItems(group), "Expand Group");
+            var point = RepresentativeTabPosition(group);
+            ClickMenuItem(GroupMenuItems(group), "Expand Group");
             yield return WaitForMenuAction();
             Assert.That(group.collapsed, Is.False);
-            point = HeadingTabPosition(group);
+            point = RepresentativeTabPosition(group);
             var area = (Rect)DockType.GetField("m_TabAreaRect", Flags).GetValue(dock);
-            Assert.That(area.Contains(point), Is.True, "Explicit expansion must leave the heading visible");
-            ClickMenuItem(HeadingMenuItems(group), "Collapse Group");
+            Assert.That(area.Contains(point), Is.True, "Explicit expansion must leave the selected member visible");
+            ClickMenuItem(GroupMenuItems(group), "Collapse Group");
             yield return WaitForMenuAction();
             Assert.That(group.collapsed, Is.True);
             Assert.That(group.members.Count, Is.EqualTo(10));
         }
 
         [UnityTest]
-        public IEnumerator NativeHeadingTabScrollerDoesNotToggleGroupUnderneath()
+        public IEnumerator NativeTabScrollerDoesNotToggleGroupUnderneath()
         {
             for (var i = 0; i < 5; i++) Move(Window(100 + i), dock);
             var group = Group(Tabs(dock).Skip(Tabs(dock).Length - 2).ToArray());
             group.groupName = "A very long group heading";
             group.RefreshTitle();
             JEEWindowGroups.SetCollapsed(group, true);
-            HeadingTabPosition(group);
+            RepresentativeTabPosition(group);
             var area = (Rect)DockType.GetField("m_TabAreaRect", Flags).GetValue(dock);
-            var x = (float)DockType.GetMethod("CalculateTabXPosition", Flags).Invoke(dock, new object[] { Array.IndexOf(Tabs(dock), group) });
+            var x = (float)DockType.GetMethod("CalculateTabXPosition", Flags).Invoke(dock, new object[] { Array.IndexOf(Tabs(dock), group.lastActiveMember) });
             DockType.GetField("m_ScrollOffset", Flags).SetValue(dock, x - area.width + 60);
-            group.SendEvent(new Event { type = EventType.Repaint });
+            group.lastActiveMember.SendEvent(new Event { type = EventType.Repaint });
             var scroller = (Rect)DockType.GetField("m_ScrollRightRect", Flags).GetValue(dock);
             Assert.That(scroller.width, Is.GreaterThan(0), "The fixture must have a real tab scroller");
             TabInput(group, EventType.MouseDown, scroller.center);
             TabInput(group, EventType.MouseUp, scroller.center);
             yield return WaitForMenuAction();
-            Assert.That(group.collapsed, Is.True, "Scrolling the tab strip must not click the heading underneath the button");
+            Assert.That(group.collapsed, Is.True, "Scrolling the tab strip must not toggle a group");
         }
 
         [TestCase(0)]
@@ -468,9 +558,11 @@ namespace JustEnoughEditor.Tests
         {
             var group = Group(first, second);
             var ids = new[] { first.GetInstanceID(), second.GetInstanceID() };
+            var representative = index == 0 ? second : first;
+            representative.Focus();
             JEEWindowGroups.SetCollapsed(group, true);
-            CollectionAssert.AreEqual(new EditorWindow[] { anchor, group }, Tabs(dock));
-            Assert.That(Dock(first), Is.Not.Null.And.Not.SameAs(dock));
+            CollectionAssert.AreEqual(new EditorWindow[] { anchor, representative }, Tabs(dock));
+            Assert.That(Dock(index == 0 ? first : second), Is.Not.Null.And.Not.SameAs(dock));
             var target = index == 0 ? first : second;
             target.Focus();
             Assert.That(group.collapsed, Is.False);
@@ -493,12 +585,12 @@ namespace JustEnoughEditor.Tests
         }
 
         [Test]
-        public void CollapsingSelectedMemberSelectsHeading()
+        public void CollapsingKeepsSelectedMemberAndItsContent()
         {
             var group = Group(first, second);
             second.Focus();
             JEEWindowGroups.SetCollapsed(group, true);
-            Assert.That(Active(dock), Is.SameAs(group));
+            Assert.That(Active(dock), Is.SameAs(second));
         }
 
         [TestCase(false)]
@@ -515,7 +607,7 @@ namespace JustEnoughEditor.Tests
         }
 
         [Test]
-        public void ClosingHeadingRestoresCollapsedMembers()
+        public void ClosingStorageRestoresCollapsedMembers()
         {
             var group = Group(first, second);
             JEEWindowGroups.SetCollapsed(group, true);
@@ -534,19 +626,20 @@ namespace JustEnoughEditor.Tests
             Assert.That(Tabs(dock), Does.Contain(first));
         }
 
-        [TestCase(false)]
-        [TestCase(true)]
-        public void MovingHeadingMovesMembersAndKeepsCollapseState(bool collapsed)
+        [Test]
+        public void MovingCollapsedRepresentativeMovesGroupAndKeepsCollapseState()
         {
             var group = Group(first, second);
-            JEEWindowGroups.SetCollapsed(group, collapsed);
+            first.Focus();
+            JEEWindowGroups.SetCollapsed(group, true);
             var other = Window(3, true); var otherDock = Dock(other);
-            Move(group, otherDock);
+            Move(first, otherDock);
             JEEWindowGroups.Reconcile();
-            Assert.That(group.collapsed, Is.EqualTo(collapsed));
-            Assert.That(Tabs(dock), Is.EqualTo(new EditorWindow[] { anchor }));
+            Assert.That(group.collapsed, Is.True);
+            Assert.That(group.ownerDock, Is.SameAs(otherDock));
+            CollectionAssert.AreEqual(new EditorWindow[] { anchor }, Tabs(dock));
             JEEWindowGroups.SetCollapsed(group, false);
-            CollectionAssert.AreEqual(new EditorWindow[] { other, group, first, second }, Tabs(otherDock));
+            CollectionAssert.AreEqual(new EditorWindow[] { other, first, second }, Tabs(otherDock));
         }
 
         [Test]
@@ -590,13 +683,17 @@ namespace JustEnoughEditor.Tests
         }
 
         [Test]
-        public void ClosingOnlyVisibleHeadingKeepsItsHiddenMembersAlive()
+        public void ClosingOnlyVisibleRepresentativeKeepsOtherMembersAlive()
         {
             var group = Group(anchor, first, second);
+            first.Focus();
             JEEWindowGroups.SetCollapsed(group, true);
-            Assert.That(Tabs(dock), Is.EqualTo(new EditorWindow[] { group }));
-            group.Close();
-            CollectionAssert.AreEqual(new EditorWindow[] { anchor, first, second }, Tabs(dock));
+            CollectionAssert.AreEqual(new EditorWindow[] { first }, Tabs(dock));
+            first.Close();
+            JEEWindowGroups.Reconcile();
+            Assert.That(group, Is.Not.Null);
+            CollectionAssert.AreEqual(new EditorWindow[] { anchor, second }, group.members);
+            CollectionAssert.AreEqual(new EditorWindow[] { anchor }, Tabs(dock));
             Assert.That(second.value, Is.EqualTo(29));
         }
 
@@ -618,11 +715,12 @@ namespace JustEnoughEditor.Tests
             var b = Group(second);
             JEEWindowGroups.SetCollapsed(a, true);
             JEEWindowGroups.SetCollapsed(b, true);
-            first.Focus();
+            JEEWindowGroupSettings.AutoExpandCollapse = true;
+            first.Focus(); JEEWindowGroups.FollowFocus();
             Assert.That(a.collapsed, Is.False);
             Assert.That(b.collapsed, Is.True);
             CollectionAssert.Contains(Tabs(dock), first);
-            CollectionAssert.DoesNotContain(Tabs(dock), second);
+            CollectionAssert.Contains(Tabs(dock), second);
         }
 
         [Test]
@@ -670,8 +768,10 @@ namespace JustEnoughEditor.Tests
                 JEEWindowGroups.SetCollapsed(group, true);
                 JEEWindowGroups.SetCollapsed(group, false);
             }
+            Assert.That(Resources.FindObjectsOfTypeAll<JEEWindowGroupParking>().Length, Is.EqualTo(before + 1));
+            JEEWindowGroups.Ungroup(group);
             Assert.That(Resources.FindObjectsOfTypeAll<JEEWindowGroupParking>().Length, Is.EqualTo(before));
-            CollectionAssert.AreEqual(new EditorWindow[] { anchor, group, first, second }, Tabs(dock));
+            CollectionAssert.AreEqual(new EditorWindow[] { anchor, first, second }, Tabs(dock));
         }
 
         [TestCase("UnityEditor.SceneView")]
@@ -688,6 +788,7 @@ namespace JustEnoughEditor.Tests
             Move(window, dock);
             var id = window.GetInstanceID();
             var group = Group(first, window);
+            first.Focus();
             JEEWindowGroups.SetCollapsed(group, true);
             window.Focus();
             Assert.That(window.GetInstanceID(), Is.EqualTo(id));
@@ -709,23 +810,110 @@ namespace JustEnoughEditor.Tests
         }
 
         [Test]
-        public void HeadingRendersManagementControlsForBothStates()
+        public void CollapsedRepresentativeRestoresItsNativeTitleAndIcon()
+        {
+            var title = new GUIContent(second.titleContent);
+            var group = Group(first, second);
+            second.Focus();
+            JEEWindowGroups.SetCollapsed(group, true);
+            Assert.That(second.titleContent.text, Is.EqualTo("Work (2)"));
+            Assert.That(second.titleContent.image, Is.SameAs(title.image));
+            Assert.That(Active(dock), Is.SameAs(second));
+            JEEWindowGroups.SetCollapsed(group, false);
+            Assert.That(second.titleContent.text, Is.EqualTo(title.text));
+            Assert.That(second.titleContent.image, Is.SameAs(title.image));
+            Assert.That(second.titleContent.tooltip, Is.EqualTo(title.tooltip));
+            CollectionAssert.AreEqual(new EditorWindow[] { anchor, first, second }, Tabs(dock));
+        }
+
+        [Test]
+        public void AutomaticModeIsUserScopedAndEnabledByDefault()
+        {
+            EditorPrefs.DeleteKey(JEEWindowGroupSettings.AutoExpandCollapseKey);
+            Assert.That(JEEWindowGroupSettings.AutoExpandCollapse, Is.True);
+            var provider = JEEWindowGroupSettings.CreateUserProvider();
+            Assert.That(provider.scope, Is.EqualTo(SettingsScope.User));
+            Assert.That(provider.settingsPath, Is.EqualTo("Preferences/Just Enough Editor/Window Groups"));
+            JEEWindowGroupSettings.AutoExpandCollapse = false;
+            Assert.That(EditorPrefs.GetBool(JEEWindowGroupSettings.AutoExpandCollapseKey, true), Is.False);
+        }
+
+        [UnityTest]
+        public IEnumerator SettingsAndUtilityFocusDoNotFoldTheWorkingGroup()
         {
             var group = Group(first, second);
-            foreach (var collapsed in new[] { false, true })
-            {
-                JEEWindowGroups.SetCollapsed(group, collapsed);
-                group.SendEvent(new Event { type = EventType.Layout });
-                group.SendEvent(new Event { type = EventType.Repaint });
-                Assert.That(group.titleContent.text, Does.Contain("Work").And.Contain("(2)"));
-                Assert.That(group.titleContent.image, Is.Not.Null);
-            }
+            JEEWindowGroupSettings.AutoExpandCollapse = true;
+            first.Focus(); JEEWindowGroups.FollowFocus();
+            var settings = SettingsService.OpenProjectSettings("Project/Just Enough Editor/Window Groups");
+            owned.Add(settings);
+            settings.Focus();
+            yield return WaitForMenuAction();
+            JEEWindowGroups.FollowFocus();
+            Assert.That(group.collapsed, Is.False);
+            var utility = Window(91);
+            utility.ShowUtility(); utility.Focus();
+            yield return WaitForMenuAction();
+            JEEWindowGroups.FollowFocus();
+            Assert.That(group.collapsed, Is.False);
+        }
+
+        [Test]
+        public void RemovingTheRepresentativeRestoresItsTitleAndKeepsOtherMembers()
+        {
+            var title = new GUIContent(first.titleContent);
+            var group = Group(first, second);
+            first.Focus();
+            JEEWindowGroups.SetCollapsed(group, true);
+            JEEWindowGroups.RemoveMember(group, first);
+            Assert.That(first.titleContent.text, Is.EqualTo(title.text));
+            Assert.That(group.collapsed, Is.True);
+            CollectionAssert.AreEqual(new[] { second }, group.members);
+            Assert.That(Dock(second), Is.SameAs(dock));
+            Assert.That(JEEWindowGroups.FindGroup(first), Is.Null);
+        }
+
+        [Test]
+        public void MigratesAnExistingHeadingIntoHiddenStorageWithoutRecreatingTabs()
+        {
+            var group = Group(first, second);
+            var parking = group.parking;
+            Move(group, dock);
+            group.parking = null;
+            JEEDockAdapter.DestroyParking(parking);
+            var ids = new[] { first.GetInstanceID(), second.GetInstanceID() };
+            JEEWindowGroups.Reconcile();
+            CollectionAssert.AreEqual(new EditorWindow[] { anchor, first, second }, Tabs(dock));
+            CollectionAssert.AreEqual(ids, group.members.Select(w => w.GetInstanceID()).ToArray());
+            Assert.That(group.ownerDock, Is.SameAs(dock));
+            Assert.That(group.parking, Is.Not.Null);
+            Assert.That(Dock(group), Is.SameAs(group.parking));
+        }
+
+        [Test]
+        public void NativeDetachOfTheOnlyRepresentativeRetainsHiddenMembers()
+        {
+            var group = Group(anchor, first, second);
+            first.Focus();
+            JEEWindowGroups.SetCollapsed(group, true);
+            var destination = Window(72, true);
+            var target = Dock(destination);
+            DockType.GetMethod("RemoveTab", Flags, null, new[] { typeof(EditorWindow), typeof(bool), typeof(bool) }, null)
+                .Invoke(dock, new object[] { first, true, false });
+            Assert.That(group, Is.Not.Null, "The old dock must not destroy the parked members during native removal");
+            Assert.That(second, Is.Not.Null);
+            Move(first, target);
+            JEEWindowGroups.Reconcile();
+            Assert.That(group.ownerDock, Is.SameAs(target));
+            CollectionAssert.AreEqual(new EditorWindow[] { destination, first }, Tabs(target));
+            JEEWindowGroups.SetCollapsed(group, false);
+            CollectionAssert.AreEqual(new EditorWindow[] { destination, anchor, first, second }, Tabs(target));
         }
 
         [Test]
         public void UnsavedMemberRemainsInTheContainersNativeViewHierarchy()
         {
-            var group = Group(first);
+            var group = Group(first, second);
+            second.Focus();
             first.SetDirty(true);
             try
             {
@@ -751,13 +939,14 @@ namespace JustEnoughEditor.Tests
         [Test]
         public void CollapsedGroupMoveTransfersUnsavedClosePromptToDestination()
         {
-            var group = Group(first);
+            var group = Group(first, second);
+            second.Focus();
             var other = Window(3, true); var destination = Dock(other);
             first.SetDirty(true);
             try
             {
                 JEEWindowGroups.SetCollapsed(group, true);
-                Move(group, destination);
+                Move(group.lastActiveMember, destination);
                 JEEWindowGroups.Reconcile();
                 Assert.That(UnsavedWindows(destination), Does.Contain(first));
                 Assert.That(UnsavedWindows(dock), Has.No.Member(first));
@@ -800,41 +989,37 @@ namespace JustEnoughEditor.Tests
         }
 
         [Test]
-        public void FailedExpandedGroupMoveRestoresMembershipAndOrder()
+        public void FailedCollapseRestoresAllMembersAndTheirSelection()
         {
             var group = Group(first, second);
-            var after = Window(41); Move(after, dock);
-            anchor.Focus();
-            var other = Window(3, true); var destination = Dock(other);
-            var sourceOrder = Tabs(dock); var destinationOrder = Tabs(destination);
+            first.Focus();
+            var order = Tabs(dock);
             second.throwOnNextAdd = true;
-            LogAssert.Expect(LogType.Error, "Window Groups: Disposable window rejected the destination");
-            Move(group, destination);
-            JEEWindowGroups.Reconcile();
-            Assert.That(Dock(group), Is.SameAs(dock));
+            Assert.Throws<TargetInvocationException>(() => JEEWindowGroups.SetCollapsed(group, true));
             Assert.That(group.collapsed, Is.False);
+            CollectionAssert.AreEqual(order, Tabs(dock));
+            Assert.That(Active(dock), Is.SameAs(first));
             CollectionAssert.AreEqual(new EditorWindow[] { first, second }, group.members);
-            CollectionAssert.AreEqual(sourceOrder, Tabs(dock));
-            CollectionAssert.AreEqual(destinationOrder, Tabs(destination));
         }
         [Test]
-        public void MovingCollapsedHeadingDoesNotReactivateMembersDuringNativeDetach()
+        public void MovingCollapsedRepresentativeDoesNotReactivateHiddenMembersDuringNativeDetach()
         {
             var group = Group(first, second);
+            first.Focus();
             JEEWindowGroups.SetCollapsed(group, true);
-            var parking = Dock(first);
+            var parking = Dock(second);
             var other = Window(3, true); var destination = Dock(other);
             second.throwOnNextAdd = true;
             try
             {
-                Move(group, destination);
+                Move(group.lastActiveMember, destination);
                 JEEWindowGroups.Reconcile();
                 Assert.That(group.collapsed, Is.True);
-                Assert.That(Dock(first), Is.SameAs(parking));
+                Assert.That(Dock(first), Is.SameAs(destination));
                 Assert.That(Dock(second), Is.SameAs(parking));
                 Assert.That(second.throwOnNextAdd, Is.True, "Moving a collapsed group must not re-add or activate its members.");
                 CollectionAssert.AreEqual(new EditorWindow[] { anchor }, Tabs(dock));
-                CollectionAssert.AreEqual(new EditorWindow[] { other, group }, Tabs(destination));
+                CollectionAssert.AreEqual(new EditorWindow[] { other, first }, Tabs(destination));
             }
             finally { second.throwOnNextAdd = false; }
         }

@@ -21,10 +21,14 @@ namespace JustEnoughEditor
         private static readonly PropertyInfo DockVisualTree;
         private static readonly FieldInfo TabArea, TabStyle, TabScroll, ScrollLeft, ScrollRight, Dragging;
         private static readonly MethodInfo TabWidth;
+        private static readonly PropertyInfo MenuItems = typeof(GenericMenu).GetProperty("menuItems", Flags);
+        private static readonly FieldInfo MenuCallback = typeof(GenericMenu).GetNestedType("MenuItem", Flags)?.GetField("func2", Flags);
+        private static readonly MethodInfo AddTabToHere;
         private static Delegate activeChangedHandler;
         private static EventInfo defaultMenuItems;
         private static readonly Action<GenericMenu, EditorWindow> menuHandler = OnPopulateTabMenu;
         internal static string UnavailableReason { get; private set; }
+        internal static bool IsDragging => Dragging != null && (bool)Dragging.GetValue(null);
         internal static event Action<ScriptableObject, EditorWindow> Activated;
         internal static event Action<GenericMenu, EditorWindow> PopulateTabMenu;
 
@@ -49,6 +53,7 @@ namespace JustEnoughEditor
                 ShowMode = containerType.GetProperty("showMode", Flags);
                 UnsavedChanged = containerType.GetMethod("UnsavedStateChanged", Flags);
                 AddTab = DockType.GetMethod("AddTab", Flags, null, new[] { typeof(int), typeof(EditorWindow), typeof(bool) }, null);
+                AddTabToHere = DockType.GetMethod("AddTabToHere", Flags, null, new[] { typeof(object) }, null);
                 RemoveTab = DockType.GetMethod("RemoveTab", Flags, null, new[] { typeof(EditorWindow), typeof(bool), typeof(bool) }, null);
                 AddChild = ViewType.GetMethod("AddChild", Flags, null, new[] { ViewType }, null);
                 RemoveChild = ViewType.GetMethod("RemoveChild", Flags, null, new[] { ViewType }, null);
@@ -110,6 +115,27 @@ namespace JustEnoughEditor
             defaultMenuItems = null;
         }
         private static void OnPopulateTabMenu(GenericMenu menu, EditorWindow window) => PopulateTabMenu?.Invoke(menu, window);
+        internal static void AfterNewTabFromMenu(GenericMenu menu, ScriptableObject dock, Action<EditorWindow[]> added)
+        {
+            if (MenuItems == null || MenuCallback == null || AddTabToHere == null) return;
+            // HostView raises the menu event before DockArea appends its native Add Tab items.
+            // Keep their labels, types and creation callbacks; decorate only this menu instance.
+            EditorApplication.delayCall += () =>
+            {
+                foreach (var item in (IEnumerable)MenuItems.GetValue(menu))
+                {
+                    var create = MenuCallback.GetValue(item) as GenericMenu.MenuFunction2;
+                    if (create == null || create.Method != AddTabToHere || !ReferenceEquals(create.Target, dock)) continue;
+                    MenuCallback.SetValue(item, (GenericMenu.MenuFunction2)(data =>
+                    {
+                        if (!IsOrdinaryDock(dock)) return;
+                        var before = Tabs(dock);
+                        create(data);
+                        added(Tabs(dock).Except(before).ToArray());
+                    }));
+                }
+            };
+        }
         private static void OnActiveChanged(object host)
         {
             if (host is ScriptableObject obj && obj) Activated?.Invoke(obj, Actual.GetValue(host) as EditorWindow);
@@ -122,7 +148,7 @@ namespace JustEnoughEditor
         }
         internal static void UpdateGroupIndicator(JEEWindowGroup group, ref IMGUIContainer indicator)
         {
-            var dock = Dock(group);
+            var dock = group.ownerDock;
             if (UnavailableReason != null || !IsOrdinaryDock(dock) || DockVisualTree == null
                 || TabArea == null || TabStyle == null || TabScroll == null || ScrollLeft == null || ScrollRight == null || TabWidth == null)
             {
@@ -152,13 +178,13 @@ namespace JustEnoughEditor
 
         internal static Rect GroupIndicatorBounds(JEEWindowGroup group)
         {
-            var dock = Dock(group);
-            if (!IsOrdinaryDock(dock) || group.maximized || (Dragging != null && (bool)Dragging.GetValue(null))) return Rect.zero;
+            var dock = group.ownerDock;
+            if (!IsOrdinaryDock(dock) || group.members.Any(w => w && w.maximized) || IsDragging) return Rect.zero;
             var area = (Rect)TabArea.GetValue(dock);
             var style = TabStyle.GetValue(dock) as GUIStyle;
             if (style == null || area.width <= 0) return Rect.zero;
             var tabs = Tabs(dock);
-            var start = Array.IndexOf(tabs, group);
+            var start = Array.FindIndex(tabs, w => group.members.Contains(w));
             if (start < 0) return Rect.zero;
             var end = start;
             while (!group.collapsed && end + 1 < tabs.Length && group.members.Contains(tabs[end + 1])) end++;
@@ -186,7 +212,7 @@ namespace JustEnoughEditor
             var index = Array.IndexOf(Tabs(dock), window);
             if (index < 0 || ScrollToTab == null) return;
             // Adding members schedules native scrolling to the last added tab.
-            // Keep the selected heading visible through that same native mechanism.
+            // Keep the selected real member visible through that same native mechanism.
             ScrollToTab.SetValue(dock, index);
             Repaint.Invoke(dock, null);
         }

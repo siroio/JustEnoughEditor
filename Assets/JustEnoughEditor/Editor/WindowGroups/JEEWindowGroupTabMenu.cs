@@ -25,7 +25,23 @@ namespace JustEnoughEditor
             var owner = JEEWindowGroups.FindGroup(window);
             if (owner)
             {
-                menu.AddItem(new GUIContent(Menu + "Settings…"), false, JEEWindowGroupSettings.Open);
+                JEEDockAdapter.AfterNewTabFromMenu(menu, dock, windows =>
+                {
+                    if (!owner || owner.disposing || owner.ownerDock != dock || !window
+                        || JEEDockAdapter.Dock(window) != dock || JEEWindowGroups.FindGroup(window) != owner) return;
+                    var additions = windows.Where(JEEWindowGroups.IsEligible).ToArray();
+                    if (additions.Length == 0) return;
+                    var selected = JEEDockAdapter.Active(dock);
+                    try
+                    {
+                        JEEWindowGroups.SetCollapsed(owner, false);
+                        JEEWindowGroups.AddMembers(owner, additions);
+                        JEEDockAdapter.Select(dock, selected);
+                        if (selected) selected.Focus();
+                    }
+                    catch (Exception ex) { Debug.LogException(ex); }
+                });
+                owner.AddItemsToMenu(menu, Menu);
                 menu.AddItem(new GUIContent(Menu + "Remove from Group"), false,
                     () => Schedule(window, dock, () =>
                     {
@@ -40,7 +56,7 @@ namespace JustEnoughEditor
                         if (JEEWindowGroups.IsEligible(window))
                             JEEWindowGroups.Create(new[] { window }, window.titleContent.text);
                     }));
-                var groups = JEEDockAdapter.Tabs(dock).OfType<JEEWindowGroup>().Where(g => !g.disposing).ToArray();
+                var groups = JEEWindowGroups.InDock(dock).ToArray();
                 if (groups.Length == 0) menu.AddDisabledItem(new GUIContent(Menu + "Add to Group (No Groups in This Dock)"));
                 foreach (var group in groups)
                 {
@@ -49,7 +65,7 @@ namespace JustEnoughEditor
                     menu.AddItem(new GUIContent(Menu + "Add to Group/" + label), false,
                         () => Schedule(window, dock, () =>
                         {
-                            if (group && !group.disposing && JEEDockAdapter.Dock(group) == dock && JEEWindowGroups.IsEligible(window))
+                            if (group && !group.disposing && group.ownerDock == dock && JEEWindowGroups.IsEligible(window))
                                 JEEWindowGroups.AddMembers(group, new[] { window });
                         }));
                 }

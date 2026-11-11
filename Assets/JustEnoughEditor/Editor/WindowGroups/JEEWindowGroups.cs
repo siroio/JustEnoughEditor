@@ -11,11 +11,12 @@ namespace JustEnoughEditor
     {
         private static readonly HashSet<JEEWindowGroup> Groups = new HashSet<JEEWindowGroup>();
         private static int mutationDepth;
-        private static bool shuttingDown;
-        private static bool attemptedCompatibilityRecovery;
-        private static EditorWindow maximizedWindow;
+        private static bool shuttingDown, attemptedCompatibilityRecovery;
+        private static EditorWindow maximizedWindow, lastFocusedWindow;
         private static double nextReconcile;
         internal static bool IsMutating => mutationDepth != 0;
+        internal static IEnumerable<JEEWindowGroup> InDock(ScriptableObject dock) =>
+            Groups.Where(g => g && !g.disposing && g.ownerDock == dock);
 
         static JEEWindowGroups()
         {
@@ -27,7 +28,7 @@ namespace JustEnoughEditor
             {
                 maximizedWindow = Resources.FindObjectsOfTypeAll<EditorWindow>().FirstOrDefault(w => w.maximized);
                 foreach (var group in Resources.FindObjectsOfTypeAll<JEEWindowGroup>()) Register(group);
-                SafeReconcile();
+                Reconcile();
             };
         }
         internal static void Register(JEEWindowGroup group) { if (group) Groups.Add(group); }
@@ -44,139 +45,164 @@ namespace JustEnoughEditor
                 || windows.Any(w => !IsEligible(w) || JEEDockAdapter.Dock(w) != dock))
                 throw new ArgumentException("Select ungrouped windows from the same ordinary dock.");
             var tabs = JEEDockAdapter.Tabs(dock);
-            var ordered = tabs.Where(w => windows.Contains(w)).ToList();
             var group = ScriptableObject.CreateInstance<JEEWindowGroup>();
             group.groupId = Guid.NewGuid().ToString("N");
             group.groupName = string.IsNullOrWhiteSpace(name) ? "Window Group" : name.Trim();
-            var usedColors = tabs.OfType<JEEWindowGroup>().Select(g => g.groupColor).ToArray();
+            var usedColors = InDock(dock).Where(g => g != group).Select(g => g.groupColor).ToArray();
             group.groupColor = Enumerable.Range(0, usedColors.Length + 1)
                 .Select(i => Color.HSVToRGB(Mathf.Repeat(0.58f + i * 0.618034f, 1f), 0.55f, 0.9f))
                 .First(color => !usedColors.Contains(color));
-            group.members = ordered;
+            group.members = tabs.Where(w => windows.Contains(w)).ToList();
+            group.lastActiveMember = windows.Contains(JEEDockAdapter.Active(dock)) ? JEEDockAdapter.Active(dock) : windows[0];
             group.ownerDock = dock;
             mutationDepth++;
             try
             {
-                JEEDockAdapter.Move(group, dock, Array.IndexOf(tabs, ordered[0]));
+                EnsureStorage(group);
                 Arrange(group);
-                JEEDockAdapter.Select(dock, group);
+                JEEDockAdapter.Select(dock, group.lastActiveMember);
                 group.RefreshTitle();
                 return group;
             }
-            catch
-            {
-                group.disposing = true;
-                group.Close();
-                JEEDockAdapter.Order(dock, tabs);
-                throw;
-            }
+            catch { Ungroup(group); JEEDockAdapter.Order(dock, tabs); throw; }
             finally { mutationDepth--; }
+        }
+
+        private static void EnsureStorage(JEEWindowGroup group)
+        {
+            if (!group.parking) group.parking = JEEDockAdapter.CreateParking(group.ownerDock, group);
+            // Migrate old layout headings into the offscreen host without recreating members.
+            if (JEEDockAdapter.Dock(group) != group.parking)
+            {
+                if (!group.lastActiveMember || !group.members.Contains(group.lastActiveMember))
+                    group.lastActiveMember = group.members.FirstOrDefault(w => w);
+                if (group.collapsed && group.lastActiveMember && JEEDockAdapter.Dock(group.lastActiveMember) == group.parking)
+                    JEEDockAdapter.Move(group.lastActiveMember, group.ownerDock,
+                        Array.IndexOf(JEEDockAdapter.Tabs(group.ownerDock), group));
+                var selected = JEEDockAdapter.Active(group.ownerDock);
+                JEEDockAdapter.Move(group, group.parking);
+                JEEDockAdapter.Idle(group.parking);
+                JEEDockAdapter.Select(group.ownerDock, selected == group ? group.lastActiveMember : selected);
+            }
         }
 
         internal static void SetCollapsed(JEEWindowGroup group, bool value)
         {
             JEEDockAdapter.RequireSupport();
             if (!group || group.disposing) return;
-            var dock = JEEDockAdapter.Dock(group);
-            if (!JEEDockAdapter.IsOrdinaryDock(dock)) throw new InvalidOperationException("Restore the group to an ordinary dock before changing it.");
+            var dock = group.ownerDock;
+            if (!JEEDockAdapter.IsOrdinaryDock(dock) || group.members.Any(w => w && w.maximized))
+                throw new InvalidOperationException("Restore the group to an ordinary dock before changing it.");
             mutationDepth++;
             var selected = JEEDockAdapter.Active(dock);
             try
             {
-                group.ownerDock = dock;
+                EnsureStorage(group);
+                if (group.members.Contains(selected)) group.lastActiveMember = selected;
+                if (!group.lastActiveMember || !group.members.Contains(group.lastActiveMember))
+                    group.lastActiveMember = group.members.FirstOrDefault(w => w);
+                group.RestoreTitle();
                 if (value)
                 {
-                    if (group.collapsed && group.parking) return;
-                    group.parking = JEEDockAdapter.CreateParking(dock, group);
-                    foreach (var member in group.members.Where(w => w)) JEEDockAdapter.Move(member, group.parking);
+                    if (group.lastActiveMember && JEEDockAdapter.Dock(group.lastActiveMember) == group.parking)
+                        JEEDockAdapter.Move(group.lastActiveMember, dock);
+                    foreach (var member in group.members.Where(w => w && w != group.lastActiveMember && JEEDockAdapter.Dock(w) == dock))
+                        JEEDockAdapter.Move(member, group.parking);
                     JEEDockAdapter.Idle(group.parking);
                     group.collapsed = true;
-                    JEEDockAdapter.Select(dock, group.members.Contains(selected) ? group : selected);
+                    JEEDockAdapter.Select(dock, group.members.Contains(selected) ? group.lastActiveMember : selected);
                 }
                 else
                 {
-                    foreach (var member in group.members.Where(w => w && JEEDockAdapter.Dock(w) == group.parking).ToArray())
-                        JEEDockAdapter.Move(member, dock);
-                    JEEDockAdapter.DestroyParking(group.parking);
-                    group.parking = null;
-                    group.collapsed = false;
+                    RestoreMembers(group);
                     Arrange(group);
                     JEEDockAdapter.Select(dock, selected);
                 }
                 group.RefreshTitle();
+                JEEDockAdapter.KeepTabVisible(JEEDockAdapter.Active(dock));
             }
             catch
             {
-                // Recover a partially completed collapse without destroying live members.
-                foreach (var member in group.members.Where(w => w && JEEDockAdapter.Dock(w) == group.parking).ToArray())
-                    JEEDockAdapter.Move(member, dock);
-                JEEDockAdapter.DestroyParking(group.parking);
-                group.parking = null;
-                group.collapsed = false;
+                RestoreMembers(group);
                 Arrange(group);
                 JEEDockAdapter.Select(dock, selected);
                 throw;
             }
             finally { mutationDepth--; }
-            if (JEEDockAdapter.Active(dock) == group) JEEDockAdapter.KeepTabVisible(group);
         }
         private static void Arrange(JEEWindowGroup group)
         {
-            var dock = JEEDockAdapter.Dock(group);
-            if (!dock || group.collapsed) return;
-            var members = group.members.Where(w => w && JEEDockAdapter.Dock(w) == dock).ToArray();
-            var order = JEEDockAdapter.Tabs(dock).Where(w => !members.Contains(w)).ToList();
-            var index = order.IndexOf(group);
+            if (group.collapsed) return;
+            var tabs = JEEDockAdapter.Tabs(group.ownerDock);
+            var members = group.members.Where(w => w && JEEDockAdapter.Dock(w) == group.ownerDock).ToArray();
+            var index = Array.FindIndex(tabs, w => members.Contains(w));
             if (index < 0) return;
-            order.InsertRange(index + 1, members);
-            JEEDockAdapter.Order(dock, order.ToArray());
+            var order = tabs.Where(w => !members.Contains(w)).ToList();
+            order.InsertRange(Math.Min(index, order.Count), members);
+            JEEDockAdapter.Order(group.ownerDock, order.ToArray());
+        }
+        private static void RestoreMembers(JEEWindowGroup group)
+        {
+            group.RestoreTitle();
+            var dock = group.ownerDock;
+            if (!dock || JEEDockAdapter.IsDestroying(dock)) return;
+            var tabs = JEEDockAdapter.Tabs(dock);
+            var index = Array.FindIndex(tabs, w => group.members.Contains(w));
+            if (index < 0) index = tabs.Length;
+            foreach (var member in group.members.Where(w => w).ToArray())
+                if (JEEDockAdapter.Dock(member) == group.parking || !JEEDockAdapter.Parent(member))
+                    JEEDockAdapter.Move(member, dock, index++);
+            group.collapsed = false;
         }
         internal static void Ungroup(JEEWindowGroup group)
         {
             if (!group || group.disposing) return;
-            SetCollapsed(group, false);
-            group.disposing = true;
-            Groups.Remove(group);
-            group.members.Clear();
-            group.Close();
+            mutationDepth++;
+            try
+            {
+                RestoreMembers(group);
+                Arrange(group);
+                var parking = group.parking;
+                var placeholder = group.transferPlaceholder;
+                group.disposing = true;
+                Groups.Remove(group);
+                group.Close();
+                JEEDockAdapter.DestroyParking(parking);
+                if (placeholder) placeholder.Close();
+            }
+            finally { mutationDepth--; }
         }
         internal static void RemoveMember(JEEWindowGroup group, EditorWindow member)
         {
             if (!group || !group.members.Contains(member)) return;
-            mutationDepth++;
-            try
-            {
-                var dock = JEEDockAdapter.Dock(group);
-                if (member && JEEDockAdapter.Dock(member) == group.parking)
-                    JEEDockAdapter.Move(member, dock, Array.IndexOf(JEEDockAdapter.Tabs(dock), group) + 1);
-                group.members.Remove(member);
-                if (group.members.Count == 0) Ungroup(group);
-                else { Arrange(group); group.RefreshTitle(); }
-            }
-            finally { mutationDepth--; }
+            var collapsed = group.collapsed;
+            SetCollapsed(group, false);
+            group.UnwatchMember(member);
+            group.members.Remove(member);
+            if (group.members.Count == 0) Ungroup(group);
+            else SetCollapsed(group, collapsed);
         }
         internal static void AddMembers(JEEWindowGroup group, IReadOnlyList<EditorWindow> windows)
         {
             JEEDockAdapter.RequireSupport();
             if (!group || group.disposing || windows == null || windows.Count == 0) throw new ArgumentException("Select at least one window.");
-            var dock = JEEDockAdapter.Dock(group);
+            var dock = group.ownerDock;
             if (!JEEDockAdapter.IsOrdinaryDock(dock) || windows.Distinct().Count() != windows.Count
                 || windows.Any(w => !IsEligible(w) || JEEDockAdapter.Dock(w) != dock))
                 throw new ArgumentException("Select ungrouped windows from this group's dock.");
             var additions = JEEDockAdapter.Tabs(dock).Where(w => windows.Contains(w)).ToArray();
-            var wasCollapsed = group.collapsed;
+            var collapsed = group.collapsed;
             mutationDepth++;
             try
             {
                 SetCollapsed(group, false);
                 group.members.AddRange(additions);
                 Arrange(group);
-                SetCollapsed(group, wasCollapsed);
-                group.RefreshTitle();
+                SetCollapsed(group, collapsed);
             }
             catch
             {
-                SetCollapsed(group, false);
+                RestoreMembers(group);
                 group.members.RemoveAll(w => additions.Contains(w));
                 Arrange(group);
                 throw;
@@ -186,145 +212,91 @@ namespace JustEnoughEditor
         internal static void RestoreAll()
         {
             JEEDockAdapter.RequireRecoverySupport();
-            foreach (var group in Resources.FindObjectsOfTypeAll<JEEWindowGroup>())
-            {
-                if (group.maximized) group.maximized = false;
-                RestoreMembers(group);
-                group.disposing = true;
-                Groups.Remove(group);
-                group.members.Clear();
-                group.Close();
-            }
+            foreach (var group in Resources.FindObjectsOfTypeAll<JEEWindowGroup>()) Ungroup(group);
         }
-        private static void RestoreMembers(JEEWindowGroup group)
-        {
-            JEEDockAdapter.RequireRecoverySupport();
-            var dock = JEEDockAdapter.Dock(group);
-            if (!dock) dock = group.ownerDock;
-            if (!dock || JEEDockAdapter.IsDestroying(dock)) throw new InvalidOperationException("The group's original dock is no longer available.");
-            mutationDepth++;
-            try
-            {
-                var index = Array.IndexOf(JEEDockAdapter.Tabs(dock), group) + 1;
-                foreach (var member in group.members.Where(w => w).ToArray())
-                {
-                    if (JEEDockAdapter.Dock(member) == group.parking || !JEEDockAdapter.Parent(member))
-                        JEEDockAdapter.Move(member, dock, index);
-                    index++;
-                }
-                JEEDockAdapter.DestroyParking(group.parking);
-                group.parking = null;
-                group.collapsed = false;
-                if (group.transferPlaceholder)
-                {
-                    group.transferPlaceholder.Close();
-                    group.transferPlaceholder = null;
-                }
-                group.RefreshTitle();
-            }
-            finally { mutationDepth--; }
-        }
+
         private static void Activated(ScriptableObject host, EditorWindow member)
         {
-            if (IsMutating || shuttingDown || !member || member is JEEWindowGroupParking) return;
+            if (IsMutating || shuttingDown || !member || member is JEEWindowGroupParking || member is JEEWindowGroup) return;
             if (member.maximized) { maximizedWindow = member; return; }
             if (member == maximizedWindow && JEEDockAdapter.IsDock(host))
             {
-                // Native unmaximize inserts the surviving window immediately before
-                // its serialized copy, then removes that copy after this callback.
                 var panes = JEEDockAdapter.Tabs(host);
-                var copyIndex = Array.IndexOf(panes, member) + 1;
-                if (copyIndex < panes.Length)
+                var index = Array.IndexOf(panes, member) + 1;
+                if (index < panes.Length)
                 {
-                    var copy = panes[copyIndex];
-                    if (member is JEEWindowGroup live && copy is JEEWindowGroup saved && live.groupId == saved.groupId)
+                    var copy = panes[index];
+                    var saved = FindGroup(copy);
+                    if (saved)
                     {
-                        live.members = new List<EditorWindow>(saved.members);
-                        live.parking = saved.parking;
-                        live.ownerDock = host;
-                        live.collapsed = saved.collapsed;
-                        foreach (var idle in JEEDockAdapter.Tabs(live.parking).OfType<JEEWindowGroupParking>()) idle.owner = live;
-                        saved.disposing = true;
-                        Groups.Remove(saved);
-                        saved.members.Clear();
-                        saved.parking = null;
-                    }
-                    else
-                    {
-                        var owner = FindGroup(copy);
-                        if (owner) owner.members[owner.members.IndexOf(copy)] = member;
+                        saved.members[saved.members.IndexOf(copy)] = member;
+                        if (saved.lastActiveMember == copy) saved.lastActiveMember = member;
+                        if (saved.labeledMember == copy) saved.labeledMember = member;
                     }
                 }
                 maximizedWindow = null;
             }
-            var group = Groups.FirstOrDefault(g => g && g.parking == host && g.members.Contains(member));
-            if (!group || !JEEDockAdapter.IsOrdinaryDock(JEEDockAdapter.Dock(group))) return;
+            var group = FindGroup(member);
+            if (!group) return;
+            group.lastActiveMember = member;
+            if (host != group.parking) return;
             try { SetCollapsed(group, false); member.Focus(); }
             catch (Exception ex) { Report(group, ex); }
         }
-        internal static void BeforeHeadingRemoved(JEEWindowGroup group)
+        internal static void BeforeMemberDetached(JEEWindowGroup group)
         {
-            if (IsMutating || shuttingDown || !group || group.disposing) return;
-            // Close() removes the heading before OnDestroy. Retain the source dock
-            // so KillIfEmpty cannot destroy its parked members with the heading.
-            // Keep a placeholder until native removal has completed; switching real
-            // tabs inside this callback corrupts Unity's render tree during dragging.
-            try
-            {
-                group.detachActive = JEEDockAdapter.Active(JEEDockAdapter.Dock(group));
-                group.detachOrder = JEEDockAdapter.Tabs(JEEDockAdapter.Dock(group));
-                if (group.collapsed && group.parking && !group.transferPlaceholder)
-                    group.transferPlaceholder = JEEDockAdapter.KeepDockAlive(group.ownerDock, group);
-            }
-            catch (Exception ex)
-            {
-                Report(group, ex);
-            }
+            if (IsMutating || shuttingDown || !group || group.disposing || !group.ownerDock
+                || JEEDockAdapter.IsDestroying(group.ownerDock) || group.transferPlaceholder) return;
+            // DetachFromPanel precedes native RemoveTab/KillIfEmpty, even when sendEvents=false.
+            // An inactive placeholder keeps parked members alive without switching render trees.
+            var tabs = JEEDockAdapter.Tabs(group.ownerDock);
+            if (tabs.Length == 1 && group.members.Contains(tabs[0]))
+                group.transferPlaceholder = JEEDockAdapter.KeepDockAlive(group.ownerDock, group);
         }
-        internal static void HeadingAdded(JEEWindowGroup group)
-        {
-            if (IsMutating || shuttingDown || !group || group.disposing || group.members.Count == 0) return;
-            // OnAddedAsTab runs inside Unity's insertion/render-tree transition.
-            // Moving other panes here can corrupt the UI Toolkit render tree.
-            EditorApplication.delayCall -= SafeReconcile;
-            EditorApplication.delayCall += SafeReconcile;
-        }
-        internal static void HeadingDestroyed(JEEWindowGroup group)
+        internal static void GroupDestroyed(JEEWindowGroup group)
         {
             Groups.Remove(group);
-            if (shuttingDown || group.disposing) return;
-            var dock = group.ownerDock;
-            if (!dock || JEEDockAdapter.IsDestroying(dock)) return;
-            var members = group.members.ToArray();
-            var parking = group.parking;
-            var placeholder = group.transferPlaceholder;
-            var index = group.detachOrder == null ? JEEDockAdapter.Tabs(dock).Length : Array.IndexOf(group.detachOrder, group);
-            if (Event.current != null)
-                EditorApplication.delayCall += () => RestoreClosedGroup(dock, members, parking, placeholder, index);
-            else RestoreClosedGroup(dock, members, parking, placeholder, index);
-        }
-        private static void RestoreClosedGroup(ScriptableObject dock, EditorWindow[] members, ScriptableObject parking,
-            JEEWindowGroupParking placeholder, int index)
-        {
-            if (shuttingDown || !dock || JEEDockAdapter.IsDestroying(dock)) return;
+            if (shuttingDown || group.disposing || !group.ownerDock || JEEDockAdapter.IsDestroying(group.ownerDock)) return;
             mutationDepth++;
             try
             {
-                foreach (var member in members.Where(w => w && JEEDockAdapter.Dock(w) == parking))
-                    JEEDockAdapter.Move(member, dock, index++);
-                JEEDockAdapter.DestroyParking(parking);
-                if (placeholder) placeholder.Close();
+                RestoreMembers(group);
+                Arrange(group);
+                JEEDockAdapter.DestroyParking(group.parking);
+                if (group.transferPlaceholder) group.transferPlaceholder.Close();
             }
             catch (Exception ex) { Debug.LogException(ex); }
             finally { mutationDepth--; }
         }
         private static void Update()
         {
-            if (EditorApplication.timeSinceStartup < nextReconcile) return;
-            nextReconcile = EditorApplication.timeSinceStartup + 0.25;
-            SafeReconcile();
+            if (IsMutating || shuttingDown || EditorApplication.isCompiling || JEEDockAdapter.IsDragging) return;
+            if (EditorApplication.timeSinceStartup >= nextReconcile)
+            {
+                nextReconcile = EditorApplication.timeSinceStartup + 0.25;
+                Reconcile();
+            }
+            FollowFocus();
         }
-        private static void SafeReconcile()
+        internal static void FollowFocus()
+        {
+            var focused = EditorWindow.focusedWindow;
+            if (!focused || focused == lastFocusedWindow || focused is JEEWindowGroup || focused is JEEWindowGroupParking
+                || !JEEDockAdapter.IsOrdinaryDock(JEEDockAdapter.Dock(focused)) || focused.maximized
+                || focused.GetType().Name == "ProjectSettingsWindow" || focused.GetType().Name == "PreferencesWindow") return;
+            lastFocusedWindow = focused;
+            var activeGroup = FindGroup(focused);
+            if (activeGroup) activeGroup.lastActiveMember = focused;
+            if (!JEEWindowGroupSettings.AutoExpandCollapse) return;
+            foreach (var group in Groups.Where(g => g && !g.disposing).ToArray())
+            {
+                if (group.collapsed == (group != activeGroup) || group.members.Any(w => w && w.maximized)) continue;
+                try { SetCollapsed(group, group != activeGroup); }
+                catch (Exception ex) { Report(group, ex); }
+            }
+            if (focused && EditorWindow.focusedWindow != focused) focused.Focus();
+        }
+        internal static void Reconcile()
         {
             if (IsMutating || shuttingDown || EditorApplication.isCompiling) return;
             if (JEEDockAdapter.UnavailableReason != null)
@@ -340,84 +312,51 @@ namespace JustEnoughEditor
             foreach (var group in Groups.ToArray())
             {
                 if (!group) { Groups.Remove(group); continue; }
-                try { ReconcileGroup(group); }
+                if (group.disposing || group.members.Any(w => w && w.maximized)) continue;
+                mutationDepth++;
+                try
+                {
+                    if (!JEEDockAdapter.IsOrdinaryDock(group.ownerDock)) continue;
+                    EnsureStorage(group);
+                    group.members.RemoveAll(w => !w);
+                    var representative = group.labeledMember;
+                    if (group.collapsed && representative && JEEDockAdapter.IsOrdinaryDock(JEEDockAdapter.Dock(representative))
+                        && JEEDockAdapter.Dock(representative) != group.ownerDock && JEEDockAdapter.Dock(representative) != group.parking)
+                    {
+                        JEEDockAdapter.ReparentParking(group.parking, JEEDockAdapter.Dock(representative));
+                        group.ownerDock = JEEDockAdapter.Dock(representative);
+                    }
+                    foreach (var member in group.members.Where(w => JEEDockAdapter.Dock(w)
+                        && JEEDockAdapter.Dock(w) != group.ownerDock && JEEDockAdapter.Dock(w) != group.parking).ToArray())
+                    {
+                        group.UnwatchMember(member);
+                        group.members.Remove(member);
+                    }
+                    if (group.members.Count == 0) { Ungroup(group); continue; }
+                    if (group.collapsed && (!group.lastActiveMember || JEEDockAdapter.Dock(group.lastActiveMember) != group.ownerDock))
+                    {
+                        group.lastActiveMember = group.members.First();
+                        JEEDockAdapter.Move(group.lastActiveMember, group.ownerDock);
+                        JEEDockAdapter.Idle(group.parking);
+                    }
+                    if (!group.collapsed)
+                    {
+                        var order = JEEDockAdapter.Tabs(group.ownerDock).Where(group.members.Contains).ToList();
+                        if (order.Count == group.members.Count) group.members = order;
+                        Arrange(group);
+                    }
+                    if (group.transferPlaceholder) { group.transferPlaceholder.Close(); group.transferPlaceholder = null; }
+                    group.RefreshTitle();
+                }
                 catch (Exception ex) { Report(group, ex); }
+                finally { mutationDepth--; }
             }
-        }
-        internal static void Reconcile()
-        {
-            SafeReconcile();
-        }
-        private static void ReconcileGroup(JEEWindowGroup group)
-        {
-            if (group.disposing) return;
-            var dock = JEEDockAdapter.Dock(group);
-            if (!dock || !JEEDockAdapter.IsOrdinaryDock(dock) || JEEDockAdapter.IsDestroying(dock)) return;
-            mutationDepth++;
-            try
-            {
-                var oldDock = group.ownerDock;
-                if (oldDock && oldDock != dock)
-                {
-                    var moved = new List<EditorWindow>();
-                    var oldOrder = group.detachOrder;
-                    var oldActive = group.detachActive;
-                    var destinationActive = JEEDockAdapter.Active(dock);
-                    try
-                    {
-                        JEEDockAdapter.ReparentParking(group.parking, dock);
-                        foreach (var member in group.members.Where(w => w && JEEDockAdapter.Dock(w) == oldDock))
-                        {
-                            JEEDockAdapter.Move(member, dock);
-                            moved.Add(member);
-                        }
-                    }
-                    catch
-                    {
-                        foreach (var member in moved) JEEDockAdapter.Move(member, oldDock);
-                        JEEDockAdapter.ReparentParking(group.parking, oldDock);
-                        JEEDockAdapter.Move(group, oldDock, oldOrder == null ? -1 : Array.IndexOf(oldOrder, group));
-                        if (oldOrder != null && oldOrder.Length == JEEDockAdapter.Tabs(oldDock).Length)
-                            JEEDockAdapter.Order(oldDock, oldOrder);
-                        JEEDockAdapter.Select(oldDock, oldActive);
-                        JEEDockAdapter.Select(dock, destinationActive);
-                        throw;
-                    }
-                    group.ownerDock = dock;
-                    group.detachOrder = null;
-                    group.detachActive = null;
-                    JEEDockAdapter.CloseEmptyDock(oldDock);
-                }
-                else group.ownerDock = dock;
-                if (group.transferPlaceholder)
-                {
-                    group.transferPlaceholder.Close();
-                    group.transferPlaceholder = null;
-                }
-                var missing = group.members.RemoveAll(w => !w);
-                if (missing > 0) group.ShowNotification(new GUIContent("Some group windows are no longer available."));
-                var memberDock = group.collapsed && group.parking ? group.parking : dock;
-                group.members.RemoveAll(w => JEEDockAdapter.Dock(w) && JEEDockAdapter.Dock(w) != memberDock);
-                if (group.members.Count == 0 && !string.IsNullOrEmpty(group.groupId)) { Ungroup(group); return; }
-                if (!group.collapsed)
-                {
-                    var order = JEEDockAdapter.Tabs(dock).Where(w => group.members.Contains(w)).ToList();
-                    if (order.Count == group.members.Count) group.members = order;
-                    Arrange(group);
-                }
-                group.RefreshTitle();
-            }
-            finally { mutationDepth--; }
         }
         private static void Report(JEEWindowGroup group, Exception ex)
         {
             var message = ex.GetBaseException().Message;
-            if (group)
-            {
-                if (group.lastError == message) return;
-                group.lastError = message;
-                group.ShowNotification(new GUIContent(message));
-            }
+            if (group.lastError == message) return;
+            group.lastError = message;
             Debug.LogError("Window Groups: " + message);
         }
     }
