@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEditor;
-using UnityEditorInternal;
 using UnityEngine;
 using UnityEngine.AI;
 using UnityEngine.UI;
@@ -88,7 +87,11 @@ namespace JustEnoughEditor
         private static Func<int, Object> s_getInstanceIDToObject;
 
         /// <summary>Hierarchy の展開状態を取得するリフレクション経由のデリゲート。</summary>
-        private static Func<int[]> s_getExpandedGameObjectIDs;
+        private static Func<List<GameObject>> s_getExpandedGameObjects;
+
+        private static readonly HashSet<int> s_expandedGameObjectIDs = new();
+        private static bool s_expandedStateNeedsRefresh = true;
+        private static bool s_expandedStateAvailable;
 
         static HierarchyColorAndIconDrawer()
         {
@@ -104,6 +107,10 @@ namespace JustEnoughEditor
             s_hoveredInstanceID = 0;
             s_iconCache.Clear();
             s_reusableContent = new GUIContent();
+            s_getExpandedGameObjects = null;
+            s_expandedGameObjectIDs.Clear();
+            s_expandedStateNeedsRefresh = true;
+            s_expandedStateAvailable = false;
 
             for (var i = 0; i < 32; i++)
             {
@@ -124,12 +131,26 @@ namespace JustEnoughEditor
                 s_getInstanceIDToObject = (Func<int, Object>)Delegate.CreateDelegate(
                     typeof(Func<int, Object>), method);
 
-            var expandedMethod = typeof(InternalEditorUtility).GetMethod(
-                "GetExpandedGameObjects",
+            var hierarchyWindowType = typeof(EditorWindow).Assembly.GetType("UnityEditor.SceneHierarchyWindow");
+            var lastWindowProperty = hierarchyWindowType?.GetProperty(
+                "lastInteractedHierarchyWindow",
                 BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+            var sceneHierarchyProperty = hierarchyWindowType?.GetProperty(
+                "sceneHierarchy",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            var expandedMethod = sceneHierarchyProperty?.PropertyType.GetMethod(
+                "GetExpandedGameObjects",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
-            if (expandedMethod != null)
-                s_getExpandedGameObjectIDs = () => (int[])expandedMethod.Invoke(null, null);
+            if (lastWindowProperty != null && sceneHierarchyProperty != null && expandedMethod != null)
+                s_getExpandedGameObjects = () =>
+                {
+                    var window = lastWindowProperty.GetValue(null);
+                    var hierarchy = window == null ? null : sceneHierarchyProperty.GetValue(window);
+                    return hierarchy == null
+                        ? null
+                        : expandedMethod.Invoke(hierarchy, null) as List<GameObject>;
+                };
 
             EditorApplication.hierarchyWindowItemOnGUI -= OnHierarchyGUI;
             EditorApplication.hierarchyWindowItemOnGUI += OnHierarchyGUI;
@@ -146,11 +167,13 @@ namespace JustEnoughEditor
         /// </summary>
         private static void OnHierarchyChanged()
         {
+            s_expandedStateNeedsRefresh = true;
             EditorApplication.RepaintHierarchyWindow();
         }
 
         private static void OnSelectionChanged()
         {
+            s_expandedStateNeedsRefresh = true;
             EditorApplication.RepaintHierarchyWindow();
         }
 
@@ -188,6 +211,9 @@ namespace JustEnoughEditor
         /// </summary>
         private static void OnHierarchyGUI(int instanceID, Rect selectionRect)
         {
+            if (Event.current.type != EventType.Repaint)
+                s_expandedStateNeedsRefresh = true;
+
             if (s_getInstanceIDToObject == null) return;
             if (s_getInstanceIDToObject(instanceID) is not GameObject obj) return;
 
@@ -329,6 +355,7 @@ namespace JustEnoughEditor
         private static void DrawSelectedScopeGuide(GameObject obj, Rect selectionRect)
         {
             if (Event.current.type != EventType.Repaint) return;
+            if (!RefreshExpandedState()) return;
 
             var selected = Selection.activeGameObject;
             if (selected == null || !IsInSelectedScope(obj.transform, selected.transform)) return;
@@ -662,20 +689,27 @@ namespace JustEnoughEditor
 
         private static bool IsExpanded(Transform t)
         {
-            if (s_getExpandedGameObjectIDs == null)
-                return true;
+            return RefreshExpandedState() && s_expandedGameObjectIDs.Contains(t.gameObject.GetInstanceID());
+        }
 
-            var expandedObjects = s_getExpandedGameObjectIDs();
-            if (expandedObjects == null)
-                return true;
+        private static bool RefreshExpandedState()
+        {
+            if (!s_expandedStateNeedsRefresh)
+                return s_expandedStateAvailable;
 
-            var instanceID = t.gameObject.GetInstanceID();
+            s_expandedStateNeedsRefresh = false;
+            s_expandedStateAvailable = false;
+            s_expandedGameObjectIDs.Clear();
 
-            for (var i = 0; i < expandedObjects.Length; i++)
-                if (expandedObjects[i] == instanceID)
-                    return true;
+            var expandedObjects = s_getExpandedGameObjects?.Invoke();
+            if (expandedObjects == null) return false;
 
-            return false;
+            foreach (var obj in expandedObjects)
+                if (obj != null)
+                    s_expandedGameObjectIDs.Add(obj.GetInstanceID());
+
+            s_expandedStateAvailable = true;
+            return true;
         }
     }
 }
